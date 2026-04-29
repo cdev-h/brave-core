@@ -91,7 +91,7 @@ void BatAdsClientMojoBridge::ShowNotificationAd(
     const brave_ads::NotificationAdInfo& ad) {
   if (bat_ads_client_associated_remote_.is_bound()) {
     bat_ads_client_associated_remote_->ShowNotificationAd(
-        brave_ads::NotificationAdToValue(ad));
+        brave_ads::NotificationAdToDict(ad));
   }
 }
 
@@ -148,7 +148,7 @@ void BatAdsClientMojoBridge::UrlRequest(
 
 void BatAdsClientMojoBridge::Save(const std::string& name,
                                   const std::string& value,
-                                  brave_ads::SaveCallback callback) {
+                                  brave_ads::ResultCallback callback) {
   if (!bat_ads_client_associated_remote_.is_bound()) {
     std::move(callback).Run(/*success*/ false);
     return;
@@ -158,7 +158,7 @@ void BatAdsClientMojoBridge::Save(const std::string& name,
 }
 
 void BatAdsClientMojoBridge::Remove(const std::string& name,
-                                    brave_ads::RemoveCallback callback) {
+                                    brave_ads::ResultCallback callback) {
   if (!bat_ads_client_associated_remote_.is_bound()) {
     std::move(callback).Run(/*success=*/false);
     return;

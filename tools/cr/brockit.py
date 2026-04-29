@@ -40,17 +40,18 @@ tools/cr/brockit.py lift --to=135.0.7037.1 --from-ref=origin/master
 ```
 
 When using `--from-ref`, any valid git reference can be used, such as a branch,
-or even hashes. Additionally there are special tags that can be passed to this
-flag.
+or even hashes. Additionally there are special labels that can be passed to
+this flag.
 
  * `--from-ref=@upstream`: This will use the upstream branch as the base for
-    the lift. This requires the user to set an upstream branch.
+    the lift. This requires the user to set an upstream branch. This value is
+    the default when none is provided.
  * `--from-ref=@previous`: This tag means the previous version since the last
     upgrade in the current branch. This is useful when telling brockit that you
     are doing a minor version bump.
- * `--from-ref=@previous-major`: This tag means the reference the parent commit
-    for the current major. This is useful when doing rebases, and wanting to
-    select from the version change.
+ * `--from-ref=@previous-major`: This label means the reference the parent
+    commit for the current major. This is useful when doing rebases, and
+    wanting to select from the version change.
 
 Using upstream:
 
@@ -59,12 +60,18 @@ git branch --set-upstream-to=origin/master
 tools/cr/brockit.py lift --to=135.0.7037.1
 ```
 
-The `--to` flag also provides special flags:
- * `--to=@latest-canary`: This will use the latest canary version as per
-    Chromium Dash. For this particular flag, both the *Canary*, and the
-    *Canary (DCHECK)* channels will be queried for the latest.
- * `--to=@latest-dev`, and `--to=@latest-beta`: Same as the falg above, but
-    to these respective channels.
+The `--to` flag also accepts special labels:
+ * `--to=@latest-tag`: Uses the latest tag from the Chromium repository.
+ * `--to=@latest-m{MAJOR}`: Uses the latest tag for the given major version
+    (e.g. `--to=@latest-m135`).
+ * `--to=@latest-for-branch`: Infers the major version from the current branch
+    name, which must follow the `cr{MAJOR}` convention (e.g. `cr135`), and
+    uses the latest tag for that major.
+ * `--to=@latest-canary`: Uses the latest canary version from Chromium Dash.
+    Both the *Canary* and the *Canary (DCHECK)* channels are queried and the
+    highest version is used.
+ * `--to=@latest-dev`, `--to=@latest-beta`, `--to=@latest-stable`: Same as
+    the flag above, but for the respective channel.
 
 The following steps will take place:
 
@@ -79,7 +86,7 @@ The following steps will take place:
    expected to provide separate commits for deleted patches, explaining the
    reason.
 6. Having resolved all conflicts. Restart *🚀Brockit!* with `--continue` and
-   other similar arguments you may want to keep (e.g. `--vscode`).
+   other similar arguments you may want to keep.
 7. *🚀Brockit!* will pick up from where it stopped, possibly running
   `npm run update_patches`, staging all patches, and committing the under
   *Conflict-resolved patches from Chromium [from] to [to].*
@@ -211,6 +218,7 @@ from repository import Repository, CHROMIUM_SRC_PATH
 from terminal import console, terminal
 import versioning
 from versioning import Version
+from vscode import VsCodeIpcConnection
 
 # This file is updated whenever the version number is updated in package.json
 PINSLIST_TIMESTAMP_FILE = (
@@ -338,7 +346,8 @@ class ApplyPatchesRecord:
 
     # A dictionary of all patches with attempted `--3way`, grouped by
     # repository.
-    patch_files: dict[Repository, Patchfile] = field(default_factory=dict)
+    patch_files: dict[Repository,
+                      list[Patchfile]] = field(default_factory=dict)
 
     # A list of patches that cannot be applied due to their source file being
     # deleted.
@@ -350,6 +359,10 @@ class ApplyPatchesRecord:
     # A list of patches that fail entirely when running apply with `--3way`.
     broken_patches: list[Patchfile] = field(default_factory=list)
 
+    def all_conflict_resolved_patches(self) -> list[Patchfile]:
+        """Returns a flattened list of all conflict-resolved candidates."""
+        return [p for patches in self.patch_files.values() for p in patches]
+
     def requires_conflict_resolution(self):
         """Checks if there are any patches that require manual conflict
         resolution.
@@ -360,7 +373,7 @@ class ApplyPatchesRecord:
         return (self.files_with_conflicts or self.patches_to_deleted_files
                 or self.broken_patches)
 
-    def stage_all_patches(self, ignore_deleted_files=False):
+    def stage_all_patches(self):
         """Stages all patches that were applied, so they can be committed as
         conflict-resolved patches.
 
@@ -370,7 +383,7 @@ class ApplyPatchesRecord:
         """
         for _, patches in self.patch_files.items():
             for patch in patches:
-                if (ignore_deleted_files and not Path(patch.path).exists()):
+                if not Path(patch.path).exists():
                     # Skip deleted files.
                     continue
 
@@ -548,6 +561,10 @@ class Versioned(Task):
                 f'Target version {self.target_version} is not higher than base '
                 f'version {self.base_version}.')
 
+    def is_major(self) -> bool:
+        """Returns True if this is a major version upgrade."""
+        return self.target_version.major > self.base_version.major
+
     def _save_updated_patches(self):
         """Creates the updated patches change
 
@@ -649,7 +666,7 @@ class GitHubIssue(Versioned):
         This title is the same used for the push request.
         """
         title = 'Upgrade from Chromium {previous} to Chromium {to}'
-        if self.target_version.major > self.base_version.major:
+        if self.is_major():
             # For major updates, the issue description doesn't have a precise
             # version number.
             title = title.format(previous=str(self.base_version.major),
@@ -724,14 +741,12 @@ class GitHubIssue(Versioned):
         else:
             cmd += ['--assignee', 'mkarolin', '--assignee', 'samartnik']
 
-        is_major = self.target_version.major > self.base_version.major
-
-        if is_major or upstream_branch == 'master':
+        if self.is_major() or upstream_branch == 'master':
             # It is not common for upstream test to be run on uplifts of minor
             # upgrades.
             cmd += ['--label', '"CI/run-upstream-tests"']
 
-        if is_major:
+        if self.is_major():
             cmd += ['--label', '"CI/storybook-url"']
 
             # Always create PR for major version upgrades as draft
@@ -932,8 +947,7 @@ class Upgrade(Versioned):
     def status_message(self):
         return "Upgrading Chromium base version"
 
-    def apply_patches_3way(self,
-                           launch_vscode: bool = False) -> ApplyPatchesRecord:
+    def apply_patches_3way(self) -> ApplyPatchesRecord:
         """Applies patches that have failed using the --3way option to allow for
         manual conflict resolution.
 
@@ -942,6 +956,9 @@ class Upgrade(Versioned):
         are waiting for conflict resolution.
 
         A list of the patches applied will be produced as well.
+
+        When running brockit in a vscode terminal, this method will open any
+        files that need attention in the editor session.
         """
         # A dictionary that holds a list for all patch files affected, by
         # repository.
@@ -989,7 +1006,7 @@ class Upgrade(Versioned):
                     for patch in patch_list
                 ]))
 
-        vscode_args = ['code']
+        vscode_files = []
         for repo, patches in patch_files.items():
             for patch in patches:
                 apply_result = patch.apply()
@@ -1039,7 +1056,7 @@ class Upgrade(Versioned):
                         console.log(
                             Padding(f'✘ {patch.source()} [red bold](deleted)',
                                     (0, 4)))
-                        vscode_args.append(patch.path)
+                        vscode_files.append(patch.path)
                     elif status.status == 'R':
                         renamed_to = patch.repository.from_brave(
                         ) / status.renamed_to
@@ -1048,7 +1065,7 @@ class Upgrade(Versioned):
                                 f'✘ {patch.source_from_brave()}\n    '
                                 f'([yellow bold]renamed to[/] {renamed_to})',
                                 (0, 4)))
-                        vscode_args += [patch.path, renamed_to]
+                        vscode_files += [patch.path, renamed_to]
 
             # Printing the commmit message for the grouped changes.
             console.log(
@@ -1064,22 +1081,16 @@ class Upgrade(Versioned):
             for patch in broken_patches:
                 source = patch.source_from_brave()
                 console.log(Padding(f'✘ {patch.path} ➜ {source}', (0, 4)))
-                vscode_args += [patch.path, source]
+                vscode_files += [patch.path, source]
 
         if files_with_conflicts:
-            vscode_args += files_with_conflicts
+            vscode_files += files_with_conflicts
             file_list = '\n'.join(f'    ✘ {file}'
                                   for file in files_with_conflicts)
             terminal.log_task(f'[bold]Manually resolve conflicts for '
                               f'{ACTION_NEEDED_DECORATOR}:[/]\n{file_list}')
 
-        if launch_vscode and len(vscode_args) > 1:
-            try:
-                terminal.run(vscode_args)
-            except subprocess.CalledProcessError as e:
-                logging.error(
-                    'Failed to launch VSCode with the following args: %s\n%s',
-                    ' '.join(vscode_args), e.stderr)
+        VsCodeIpcConnection().open_file(vscode_files)
 
         # The continuation file is updated at the end of the process, in case
         # the process has to be continued later.
@@ -1117,13 +1128,8 @@ class Upgrade(Versioned):
             f'Update from Chromium {self.base_version} '
             f'to Chromium {self.target_version}.')
 
-    def _save_conflict_resolved_patches(self):
-        repository.brave.git_commit(
-            f'Conflict-resolved patches from Chromium {self.base_version} to '
-            f'Chromium {self.target_version}.')
-
-    def _run_update_patches_with_no_deletions(self):
-        """Runs update_patches and returns if any deleted patches are found.
+    def _run_update_patches(self) -> GitStatus:
+        """Runs update_patches and returns the resulting GitStatus.
 
         This function is usually preferred, as it checks if any patches are
         deleted after running update_patches. Deleted patches should be
@@ -1131,7 +1137,7 @@ class Upgrade(Versioned):
         anymore.
 
         return:
-          Returns True if no deleted patches are found, and False otherwise.
+          The GitStatus after running update_patches.
         """
         terminal.run_npm_command('update_patches')
 
@@ -1139,11 +1145,58 @@ class Upgrade(Versioned):
         if status.has_deleted_patch_files():
             raise InvalidInputException(
                 'Deleted patches detected. These should be committed as their '
-                'own changes:\n%s' % '\n'.join(status.deleted))
+                'own changes:\n%s' %
+                '\n'.join(status.staged.deleted + status.unstaged.deleted))
         if status.has_untracked_patch_files():
             raise InvalidInputException(
                 'Untracked patch files detected. These should be committed as '
-                'their own changes:\n%s' % '\n'.join(status.untracked))
+                'their own changes:\n%s' % '\n'.join(status.unstaged.added))
+        if status.has_staged_files():
+            raise InvalidInputException(
+                'Staged files detected after running update_patches. Please '
+                'make sure to commit or unstage any changes, to avoid '
+                'committing changes unintentionally.\n'
+                'Staged files:\n%s' %
+                '\n'.join(status.get_all_staged_entries()))
+
+        # The resulting updated patches should not be doing anything beyond
+        # what they were doing already, both for "Update patches" and
+        # "Conflict-resolved patches". Therefore, we check all the modified
+        # patches to make sure that the number of hunks in these patch files
+        # have not changed, as any significant change to a patchfile should be
+        # submitted as its own change, with a culprit for visibility.
+        all_modified = status.staged.modified + status.unstaged.modified
+        modified_patches = [
+            path for path in all_modified
+            if path.startswith('patches/') and path.endswith('.patch')
+        ]
+        if not modified_patches:
+            return status
+
+        def count_hunks(contents: str) -> int:
+            return contents.count('\n@@ -')
+
+        patches_with_hunk_changes = []
+        for patch in modified_patches:
+            hunks_before = count_hunks(repository.brave.read_file(patch))
+            hunks_after = count_hunks(
+                Path(repository.brave.path / patch).read_text())
+            if hunks_before != hunks_after:
+                patches_with_hunk_changes.append(
+                    (patch, hunks_before, hunks_after))
+
+        if patches_with_hunk_changes:
+            list_str = '\n'.join([
+                f'  * {patch}: {b} hunks before, {a} hunks after'
+                for patch, b, a in patches_with_hunk_changes
+            ])
+            raise InvalidInputException(
+                'The following modified patches have changes in the number of '
+                'hunks, and are expected to be submitted separately as fixes '
+                'with Chromium culprits:\n'
+                f'{list_str}')
+
+        return status
 
     def look_for_diffs(self, *files) -> str:
         """Return the diffs for the files provided for this upgrade.
@@ -1418,25 +1471,71 @@ class Upgrade(Versioned):
             apply_record = (ContinuationFile.load(
                 self.target_version).apply_record)
 
-        self._run_update_patches_with_no_deletions()
+        update_status = self._run_update_patches()
 
-        # There are rare cases where we can end up hitting a continuation where
-        # a patch gets deleted due a cherry-pick finally being made obsolete,
-        # which means no apply records ever occurred, and therefore this value
-        # is None.
+        # `apply_records` is not guaranteed to exist for every continuation. In
+        # some cases `_run_update_patches` is reponsible for pausing the lift
+        # process (e.g. cherry-pick shows up in upstream and causes patch
+        # deletions without 3way apply).
+        conflict_resolved_patches = None
         if apply_record:
-            apply_record.stage_all_patches(ignore_deleted_files=True)
-            has_changes = repository.brave.has_staged_changed()
-        else:
-            has_changes = False
+            # A list of all "Conflict-resolved" candidates still waiting to be
+            # committed.
+            conflict_resolved_patches = {
+                patch.path.as_posix()
+                for patch in apply_record.all_conflict_resolved_patches()
+                if patch.path.as_posix() in update_status.unstaged.modified
+            }
 
-        if not has_changes and not no_conflict_continuation:
+            if (self.is_major()):
+                # When doing incremental lifts in branch, there can be cases
+                # where a patch has been added/changed by a particular fix in
+                # the branch, and therefore at this stage, it is more
+                # appropriate to commit that patch as a fixup to the last
+                # change in the branch that touched it, otherwise it will cause
+                # conflicts when doing `rebase --squash-minor-bumps`, with the
+                # conflict-resolved commit being moved above the last change
+                # for that patch.
+                up_to_git_ref = _solve_brave_ref('@previous-major')
+
+                fixup_groups: dict[str, list[str]] = {}
+                for patch_path in conflict_resolved_patches:
+                    commits = repository.brave.run_git(
+                        'log', '--pretty=%H %s', f'{up_to_git_ref}..HEAD',
+                        '--', patch_path)
+
+                    for line in commits.splitlines():
+                        commit_hash, subject = line.split(' ', 1)
+                        if (not subject.startswith(
+                                'Conflict-resolved patches from Chromium ')
+                                and not subject.startswith(
+                                    'Update patches from Chromium ')):
+                            fixup_groups.setdefault(commit_hash,
+                                                    []).append(patch_path)
+                            break
+
+                # Commit patches grouped by the target commit to avoid multiple
+                # fixups for the same change.
+                fixup_patches: set[str] = set()
+                for fixup_target, patch_paths in fixup_groups.items():
+                    for patch_path in patch_paths:
+                        repository.brave.run_git('add', patch_path)
+                        fixup_patches.add(patch_path)
+                    repository.brave.git_commit_fixup(fixup_target)
+
+                conflict_resolved_patches -= fixup_patches
+
+        if not conflict_resolved_patches and not no_conflict_continuation:
             raise InvalidInputException(
                 'Nothing has been staged to commit conflict-resolved patches. '
                 '(Did you mean to pass [bold cyan]--no-conflict-change[/]?)')
 
-        if has_changes:
-            self._save_conflict_resolved_patches()
+        if conflict_resolved_patches:
+            repository.brave.run_git('add', *conflict_resolved_patches)
+            repository.brave.git_commit(
+                f'Conflict-resolved patches from Chromium {self.base_version} '
+                f'to Chromium {self.target_version}.')
+
 
         self._save_updated_patches()
         # Run init again to make sure nothing is missing after updating
@@ -1450,21 +1549,16 @@ class Upgrade(Versioned):
         # continuation file around.
         ContinuationFile.clear()
 
-    def _start(self, launch_vscode: bool, ack_advisory: bool):
+    def _start(self, ack_advisory: bool):
         """Starts the upgrade process.
 
     This function is responsible for starting the upgrade process. It will
     update the package version, run `npm run init`, and then run
     `npm run update_patches`. If any patches fail to apply, it will run
-    `npm run apply_patches_3way` to allow for manual conflict resolution.
+    `apply_patches_3way` to allow for manual conflict resolution.
 
     For cases where no conflict resolution is required, the process will
     will continue, concluding the whole four steps of the upgrade process.
-
-    Args:
-        launch_vscode:
-            Indicates if the user wants to launch vscode with the patches that
-            require manual conflict resolution.
 
     Return:
         Returns True if the process was successful, and False otherwise.
@@ -1489,6 +1583,17 @@ class Upgrade(Versioned):
             'Changes since base version: %s' %
             self.target_version.get_googlesource_diff_link(self.base_version))
 
+        if self.is_major():
+            # When doing a major lift, the branch name should indicate that
+            # (e.g. `cr149`).
+            expected_branch = f'cr{self.target_version.major}'
+            current_branch = repository.brave.current_branch()
+            if current_branch != expected_branch:
+                raise InvalidInputException(
+                    f'Major version upgrades must be done on a branch named '
+                    f'"{expected_branch}", but the current branch is '
+                    f'"{current_branch}".')
+
         if not ack_advisory and not self._prerun_checks():
             raise ActionNeededException(
                 '👋 (Address advisories and then rerun with '
@@ -1501,7 +1606,7 @@ class Upgrade(Versioned):
 
             # When no conflicts come back, we can proceed with the
             # update_patches.
-            self._run_update_patches_with_no_deletions()
+            self._run_update_patches()
         except subprocess.CalledProcessError as e:
             if ('There were some failures during git reset of specific '
                     'repo paths' in e.stderr):
@@ -1513,8 +1618,7 @@ class Upgrade(Versioned):
             if (e.returncode != 0
                     and 'Exiting as not all patches were successful!'
                     in e.stderr.splitlines()[-1]):
-                apply_record = self.apply_patches_3way(
-                    launch_vscode=launch_vscode)
+                apply_record = self.apply_patches_3way()
                 if apply_record.requires_conflict_resolution():
                     # Manual resolution required.
                     raise ActionNeededException(
@@ -1539,8 +1643,8 @@ class Upgrade(Versioned):
         terminal.run_npm_command('chromium_rebase_l10n')
         self._save_rebased_l10n()
 
-    def execute(self, no_conflict_continuation: bool, launch_vscode: bool,
-                with_github: bool, ack_advisory: bool):
+    def execute(self, no_conflict_continuation: bool, with_github: bool,
+                ack_advisory: bool):
         """Executes the upgrade process.
 
     Keep in this function all code that is common to both start and continue.
@@ -1549,9 +1653,6 @@ class Upgrade(Versioned):
         no_conflict_continuation:
             Indicates that a continuation does not produce a conflict-resolved
             change.
-        launch_vscode:
-            Indicates the user wants to launch vscode with the patches that
-            require manual conflict resolution.
         with_github:
             Indicates the user wants to create or update the github issue for
             the upgrade.
@@ -1602,7 +1703,7 @@ class Upgrade(Versioned):
 
             self._continue(no_conflict_continuation=no_conflict_continuation)
         else:
-            self._start(launch_vscode=launch_vscode, ack_advisory=ack_advisory)
+            self._start(ack_advisory=ack_advisory)
 
         if with_github:
             GitHubIssue(base_version=self.base_version,
@@ -1612,24 +1713,33 @@ class Upgrade(Versioned):
         self._save_gnrt_rerun()
 
 
-def solve_git_ref(from_ref: str) -> str:
+def _solve_brave_ref(from_ref: Optional[str]) -> str:
     """Solves the git reference.
 
     This function is used to resolve the git reference provided by the user.
     This reference can be either a branch name, a commit hash, or a special
-    tag used by brockit to find specific changes.
+    label used by brockit to find specific changes.
 
     Args:
         from_ref:
-            The git reference to resolve.
+            The git reference to resolve. If not provided, it defaults
+            `@upstream`.
 
     Returns:
         The resolved git reference, if the reference is valid, or the
-        reference for the solved special tag:
-        @upstream: The upstream branch of the current branch.
-        @previous: The commit just before the last version bump.
-        @previous-major: The commit just before the last major version bump.
+        reference for the solved special label:
+
+        +-----------------+--------------------------------------------------+
+        | Label           | Description                                      |
+        +-----------------+--------------------------------------------------+
+        | @upstream       | Upstream branch of the current branch            |
+        | @previous       | Commit just before the last version bump         |
+        | @previous-major | Commit just before the last major version bump   |
+        +-----------------+--------------------------------------------------+
     """
+    if not from_ref:
+        from_ref = '@upstream'
+
     if from_ref and from_ref[0] != '@':
         # No special handling needed
         if not repository.brave.is_valid_git_reference(from_ref):
@@ -1905,23 +2015,20 @@ class Rebase(Task):
     Returns:
         True if the rebase was successful, and False otherwise.
         """
-        if to_ref is None:
-            to_ref = '@upstream'
-
-        to_ref = solve_git_ref(to_ref)
+        to_ref = _solve_brave_ref(to_ref)
 
         if from_ref is None:
             if Version.from_git(to_ref).major != Version.from_git(
                     'HEAD').major:
                 # If the major version is different, we default to the
                 # previous major version.
-                from_ref = solve_git_ref(from_ref or '@previous-major')
+                from_ref = _solve_brave_ref(from_ref or '@previous-major')
             else:
                 # If the major version is the same, we default to the
                 # previous version.
-                from_ref = solve_git_ref(from_ref or '@previous')
+                from_ref = _solve_brave_ref(from_ref or '@previous')
 
-        from_ref = solve_git_ref(from_ref)
+        from_ref = _solve_brave_ref(from_ref)
 
         current_branch = repository.brave.current_branch()
         terminal.log_task(
@@ -1974,7 +2081,7 @@ class Reassign(Task):
     reassigned to a different author. This class is responsible for creating an
     empty commit whose author is the person calling this command. This commit is
     similar to a `fixup!` commit, being called `reassign!`, followed by the
-    short hash for the change being reassinged. This change is then picked up
+    short hash for the change being reassigned. This change is then picked up
     by the brockit's `rebase` command, and squashed as the base commit for the
     original change, resulting in a change of authorship.
     """
@@ -1995,6 +2102,13 @@ class Reassign(Task):
             any valid git reference that resolves to a single commit.
         """
 
+        status = GitStatus()
+        if status.has_staged_files():
+            raise InvalidInputException(
+                'Staged files detected. Please commit or unstage changes '
+                'before reassigning:\n%s' %
+                '\n'.join(status.get_all_staged_entries()))
+
         commit, message = repository.brave.run_git('log', '-1', change, '-s',
                                                    '--format=%h %s').split(
                                                        ' ', 1)
@@ -2012,28 +2126,87 @@ def fetch_chromium_dash_version(channel: str, target_platform: str) -> Version:
     return Version(response.json()[0].get('version'))
 
 
-def fetch_lastest_canary_version(channel) -> Version:
-    """Fetches the latest canary version from the Chromium Dash.
-    """
-    if channel == 'canary':
-        # The canary branch has two versions, the regular and the ASAN version,
-        # and we want the highest of the two.
-        canary_version = fetch_chromium_dash_version('canary',
-                                                     target_platform='Windows')
-        canary_asan_version = fetch_chromium_dash_version(
-            'canary_asan', target_platform='Windows')
-        linux_version = fetch_chromium_dash_version(channel='canary',
-                                                    target_platform='Linux')
-        adroid_version = fetch_chromium_dash_version(channel='canary',
-                                                     target_platform='Android')
-        mac_version = fetch_chromium_dash_version(channel='canary',
-                                                  target_platform='Mac')
-        ios_verion = fetch_chromium_dash_version(channel='canary',
-                                                 target_platform='ios')
-        return max(canary_version, canary_asan_version, linux_version,
-                   adroid_version, ios_verion, mac_version)
+def _fetch_chromium_tag(to: str) -> Version:
+    """Resolves the --to flag value to a Version.
 
-    return fetch_chromium_dash_version(channel, target_platform='Windows')
+    +---------------------------+---------------------------------------------+
+    | Labels                    | Description                                 |
+    +---------------------------+---------------------------------------------+
+    | @latest-tag               | Latest tag in the Chromium repo             |
+    | @latest-m{MAJOR}          | Latest tag for the given major version      |
+    | @latest-for-branch        | Latest tag for the major inferred from the  |
+    |                           | current branch name ( format cr{MAJOR})     |
+    | @latest-canary            | Latest canary release from ChromiumDash     |
+    | @latest-beta              | Latest beta release from ChromiumDash       |
+    | @latest-dev               | Latest dev release from ChromiumDash        |
+    | @latest-stable            | Latest stable release from ChromiumDash     |
+    +---------------------------+---------------------------------------------+
+    """
+
+    # If not a label, then this value is expected to be a valid Chromium
+    # version.
+    if not to.startswith('@'):
+        return Version(to)
+
+    if to == '@latest-for-branch':
+        branch = repository.brave.current_branch()
+        match = re.fullmatch(r'cr(\d+)', branch)
+        if not match:
+            raise InvalidInputException(
+                '@latest-for-branch requires the current branch to be named '
+                f'cr{{MAJOR}} (e.g. cr135), but the current branch is '
+                f'"{branch}".')
+        return _fetch_chromium_tag(f'@latest-m{match.group(1)}')
+
+    if to == '@latest-tag':
+        version = Version.get_latest_googlesource_tag_version()
+        if version is None:
+            raise InvalidInputException(
+                'Could not fetch latest Googlesource tag.')
+        return version
+    if to.startswith('@latest-m'):
+        major_str = to[len('@latest-m'):]
+        if not major_str.isdigit():
+            raise InvalidInputException(
+                f'Invalid major version in "{to}": '
+                f'"{major_str}" is not a valid integer.')
+        version = Version.get_latest_googlesource_tag_version(
+            major=int(major_str))
+        if version is None:
+            raise InvalidInputException(
+                'Could not find a Googlesource tag for major version '
+                f'{major_str}.')
+        return version
+    if to.startswith('@latest-'):
+        [_, channel] = to.split('-', 1)
+        if channel not in ('canary', 'beta', 'dev', 'stable'):
+            raise InvalidInputException(
+                f'Invalid @latest channel: "{channel}". '
+                'Valid options: canary, beta, dev, stable.')
+
+        if channel == 'canary':
+            # The canary branch has two versions, the regular and the ASAN
+            # version, and we want the highest of the two.
+            canary_version = fetch_chromium_dash_version(
+                'canary', target_platform='Windows')
+            canary_asan_version = fetch_chromium_dash_version(
+                'canary_asan', target_platform='Windows')
+            linux_version = fetch_chromium_dash_version(
+                channel='canary', target_platform='Linux')
+            adroid_version = fetch_chromium_dash_version(
+                channel='canary', target_platform='Android')
+            mac_version = fetch_chromium_dash_version(channel='canary',
+                                                      target_platform='Mac')
+            ios_verion = fetch_chromium_dash_version(channel='canary',
+                                                     target_platform='ios')
+            return max(canary_version, canary_asan_version, linux_version,
+                       adroid_version, ios_verion, mac_version)
+        return fetch_chromium_dash_version(channel, target_platform='Windows')
+
+    raise InvalidInputException(
+        f'Unknown label: "{to}". '
+        'Valid labels: @latest-tag, @latest-m{MAJOR}, @latest-for-branch, '
+        '@latest-canary, @latest-beta, @latest-dev, @latest-stable.')
 
 
 def show(args: argparse.Namespace):
@@ -2046,19 +2219,19 @@ def show(args: argparse.Namespace):
         console.print(f'upstream version: {Version.from_git("HEAD")}')
 
     if args.from_ref_value is not None:
-        from_ref_value = Version.from_git(solve_git_ref(args.from_ref_value))
+        from_ref_value = Version.from_git(_solve_brave_ref(
+            args.from_ref_value))
         if from_ref_value is not None:
             console.print(f'base version: {from_ref_value}')
 
     if args.log_link:
         console.print('googlesource link: %s' %
                       Version.from_git('HEAD').get_googlesource_diff_link(
-                          Version.from_git(solve_git_ref('@previous'))))
+                          Version.from_git(_solve_brave_ref('@previous'))))
 
-    if args.latest_chromiumdash_version is not None:
-        console.print(
-            'latest canary version: %s' %
-            fetch_lastest_canary_version(args.latest_chromiumdash_version))
+    if args.chromium_version_label is not None:
+        console.print('version: %s' %
+                      _fetch_chromium_tag(args.chromium_version_label))
 
 def main():
     # This is a global parser with arguments that apply to every function.
@@ -2077,14 +2250,16 @@ def main():
         dest='infra_mode')
 
     # The `--from-ref` parse is used by multiple operations.
-    base_version_parser = argparse.ArgumentParser(add_help=False)
+    base_version_parser = argparse.ArgumentParser(
+        add_help=False, formatter_class=argparse.RawTextHelpFormatter)
     base_version_parser.add_argument(
         '--from-ref',
         help=
-        'A reference to the version that the upgrade is coming from. This is '
-        'a git branch, hash, tag, etc, or one of the special values: @upstream'
-        ' (upstream branch), @previous (the previous version from HEAD). '
-        'Defaults to @upstream.',
+        ('A brave-core git reference for the Chromium version to upgrade\n'
+         'from (branch, commit hash, tag, etc.), or one of these labels:\n'
+         '  @upstream        Upstream branch of the current branch (default)\n'
+         '  @previous        Commit just before the last version bump\n'
+         '  @previous-major  Commit just before the last major version bump'),
         default=None)
 
     parser = argparse.ArgumentParser()
@@ -2093,11 +2268,28 @@ def main():
     lift_parser = subparsers.add_parser(
         'lift',
         parents=[global_parser, base_version_parser],
+        formatter_class=argparse.RawTextHelpFormatter,
         help='Upgrade the chromium base version. Special tags: '
-        '@latest-[beta|dev|canary] pulls the version from chromium dash.')
-    lift_parser.add_argument('--to',
-                             required=True,
-                             help='The branch used as the base version.')
+        '@latest-[beta|dev|canary] pulls the version from chromium dash; '
+        '@latest-tag pulls the latest tag from Googlesource.')
+    lift_parser.add_argument(
+        '--to',
+        required=True,
+        help=(
+            'The Chromium version to upgrade to (e.g. 147.0.7727.117),\n'
+            'or one of the following labels:\n'
+            '  @latest-tag         Latest tag from the Chromium Googlesource'
+            ' repo\n'
+            '  @latest-m{MAJOR}    Latest Googlesource tag for the given major'
+            ' version\n'
+            '  @latest-for-branch  Latest tag for the major inferred from the\n'
+            '                      current branch name (must be named'
+            ' cr{MAJOR})\n'
+            '  @latest-canary      Latest canary release from ChromiumDash\n'
+            '  @latest-beta        Latest beta release from ChromiumDash\n'
+            '  @latest-dev         Latest dev release from ChromiumDash\n'
+            '  @latest-stable      Latest stable release from ChromiumDash'),
+    )
     lift_parser.add_argument(
         '--continue',
         action='store_true',
@@ -2117,11 +2309,6 @@ def main():
         action='store_true',
         help='Creates or updates the github for this branch.',
         dest='with_github')
-    lift_parser.add_argument(
-        '--vscode',
-        action='store_true',
-        help=
-        'Launches vscode for manual conflict resolution and similar issues.')
     lift_parser.add_argument(
         '--no-conflict-change',
         action='store_true',
@@ -2185,9 +2372,9 @@ def main():
                              action='store_true',
                              help='Prints the git log links to googlesource.')
     show_parser.add_argument(
-        '--latest-chromiumdash-version',
+        '--chromium-version-label',
         default=None,
-        help='Prints the latest version available for the channel provided.')
+        help='Prints the version for the given label (e.g. @latest-canary).')
 
     reassign_parser = subparsers.add_parser(
         'reassign',
@@ -2220,9 +2407,8 @@ def main():
                 parser.error(
                     'Switch --from-ref not supported with --continue.')
 
-    def resolve_from_ref_flag_version() -> Version:
-        return Version.from_git(
-            solve_git_ref(args.from_ref if args.from_ref else '@upstream'))
+    def resolve_version_with_from_ref_arg() -> Version:
+        return Version.from_git(_solve_brave_ref(args.from_ref))
 
     if args.command == 'lift' and args.no_conflict and not args.is_continuation:
         parser.error('--no-conflict-change can only be used with --continue')
@@ -2230,33 +2416,20 @@ def main():
         parser.error('--restart does not support --continue')
     if args.command == 'lift' and args.ack_advisory and args.is_continuation:
         parser.error('--ack-advisory does not support --continue')
-    if args.command == 'lift' and args.to.startswith('@latest-'):
-        [_, channel] = args.to.split('-')
-        if channel not in ['canary', 'beta', 'dev']:
-            parser.error('Invalid channel for --to.')
-
-    def resolve_to_flag() -> Version:
-        if args.to.startswith('@latest-'):
-            [_, channel] = args.to.split('-')
-            if channel not in ['canary', 'beta', 'dev']:
-                parser.error('Invalid channel for --to.')
-            return fetch_lastest_canary_version(channel)
-        return Version(args.to)
-
     try:
         if args.command == 'lift':
-            target = resolve_to_flag()
+            target = _fetch_chromium_tag(args.to)
             if args.restart:
                 ReUpgrade(target).run()
 
             if not args.is_continuation:
                 upgrade = Upgrade(target, args.is_continuation,
-                                  resolve_from_ref_flag_version())
+                                  resolve_version_with_from_ref_arg())
             else:
-                upgrade = Upgrade(resolve_to_flag(), args.is_continuation)
+                upgrade = Upgrade(_fetch_chromium_tag(args.to),
+                                  args.is_continuation)
 
             upgrade.run(no_conflict_continuation=args.no_conflict,
-                        launch_vscode=args.vscode,
                         with_github=args.with_github,
                         ack_advisory=args.ack_advisory)
         if args.command == 'rebase':
@@ -2266,9 +2439,10 @@ def main():
                          discard_regen_changes=args.discard_regen_changes,
                          squash_minor_bumps=args.squash_minor_bumps)
         if args.command == 'regen':
-            Regen(resolve_from_ref_flag_version()).run(dry_run=args.dry_run)
+            Regen(
+                resolve_version_with_from_ref_arg()).run(dry_run=args.dry_run)
         if args.command == 'update-version-issue':
-            GitHubIssue(resolve_from_ref_flag_version()).run()
+            GitHubIssue(resolve_version_with_from_ref_arg()).run()
         if args.command == 'reassign':
             Reassign().run(change=args.change)
         if args.command == 'reference':

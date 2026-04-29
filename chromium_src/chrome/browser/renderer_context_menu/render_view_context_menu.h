@@ -8,6 +8,7 @@
 
 #include "brave/components/ai_chat/core/common/buildflags/buildflags.h"
 #include "brave/components/containers/buildflags/buildflags.h"
+#include "brave/components/email_aliases/buildflags/buildflags.h"
 #include "brave/components/text_recognition/common/buildflags/buildflags.h"
 
 #if BUILDFLAG(ENABLE_AI_CHAT)
@@ -57,7 +58,8 @@ class RenderViewContextMenu : public RenderViewContextMenu_Chromium
   // NOLINTNEXTLINE(runtime/references)
   RenderViewContextMenu(content::RenderFrameHost& render_frame_host,
                         const content::ContextMenuParams& params,
-                        bool is_paste_enabled);
+                        bool is_paste_enabled,
+                        bool is_paste_and_match_style_enabled);
   ~RenderViewContextMenu() override;
   // RenderViewContextMenuBase:
   bool IsCommandIdEnabled(int command_id) const override;
@@ -94,7 +96,9 @@ class RenderViewContextMenu : public RenderViewContextMenu_Chromium
   void InitMenu() override;
   void NotifyMenuShown() override;
 
+#if BUILDFLAG(ENABLE_EMAIL_ALIASES)
   void BuildEmailAliasesMenu();
+#endif
 
 #if BUILDFLAG(ENABLE_AI_CHAT)
   bool IsAIChatEnabled() const;

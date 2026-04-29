@@ -21,7 +21,7 @@ class DictValue;
 
 namespace brave_ads {
 
-class VirtualPrefProviderDelegate : public VirtualPrefProvider::Delegate {
+class VirtualPrefProviderDelegate final : public VirtualPrefProvider::Delegate {
  public:
   VirtualPrefProviderDelegate(
       Profile& profile,
@@ -33,6 +33,7 @@ class VirtualPrefProviderDelegate : public VirtualPrefProvider::Delegate {
 
   ~VirtualPrefProviderDelegate() override;
 
+  // VirtualPrefProvider::Delegate:
   std::string_view GetChannel() const override;
 
   std::string GetDefaultSearchEngineName() const override;

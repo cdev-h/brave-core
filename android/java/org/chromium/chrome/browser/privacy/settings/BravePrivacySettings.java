@@ -29,6 +29,7 @@ import org.chromium.chrome.R;
 import org.chromium.chrome.browser.BraveFeatureUtil;
 import org.chromium.chrome.browser.BraveLocalState;
 import org.chromium.chrome.browser.BraveRelaunchUtils;
+import org.chromium.chrome.browser.brave_origin.BraveOriginSubscriptionPrefs;
 import org.chromium.chrome.browser.browsing_data.BraveClearBrowsingDataFragment;
 import org.chromium.chrome.browser.crypto_wallet.BraveWalletPolicy;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
@@ -52,7 +53,6 @@ import org.chromium.chrome.browser.util.TabUtils;
 import org.chromium.chrome.browser.webcompat_reporter.WebcompatReporterServiceFactory;
 import org.chromium.components.browser_ui.settings.ChromeBasePreference;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
-import org.chromium.components.browser_ui.settings.ClickableSpansTextMessagePreference;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.components.browser_ui.settings.TextMessagePreference;
 import org.chromium.components.browser_ui.settings.search.SettingsIndexData;
@@ -227,7 +227,7 @@ public class BravePrivacySettings extends PrivacySettings {
     private @Nullable ChromeSwitchPreference mSendCrashReports;
     private @Nullable ChromeSwitchPreference mBraveStatsUsagePing;
     private ChromeSwitchPreference mSurveyPanelist;
-    private ClickableSpansTextMessagePreference mSurveyPanelistLearnMore;
+    private ChromeBasePreference mSurveyPanelistLearnMore;
     private ChromeSwitchPreference mBlockSwitchToAppNoticesPref;
     private PreferenceCategory mSocialBlockingCategory;
     private ChromeSwitchPreference mSocialBlockingGoogle;
@@ -427,25 +427,27 @@ public class BravePrivacySettings extends PrivacySettings {
 
         boolean surveyPanelistEnabled =
                 ChromeFeatureList.isEnabled(
-                        BraveFeatureList.BRAVE_NTP_BRANDED_WALLPAPER_SURVEY_PANELIST);
+                                BraveFeatureList.BRAVE_NTP_BRANDED_WALLPAPER_SURVEY_PANELIST)
+                        && !BraveOriginSubscriptionPrefs.getIsCredentialSummaryActiveCached();
         mSurveyPanelist = (ChromeSwitchPreference) findPreference(PREF_SURVEY_PANELIST);
         mSurveyPanelist.setOnPreferenceChangeListener(this);
         mSurveyPanelist.setVisible(surveyPanelistEnabled);
         mSurveyPanelistLearnMore =
-                (ClickableSpansTextMessagePreference)
-                        findPreference(PREF_SURVEY_PANELIST_LEARN_MORE);
+                (ChromeBasePreference) findPreference(PREF_SURVEY_PANELIST_LEARN_MORE);
         mSurveyPanelistLearnMore.setVisible(surveyPanelistEnabled);
-        ChromeClickableSpan chromeClickableSpan =
-                new ChromeClickableSpan(
-                        getContext().getColor(R.color.brave_link),
-                        result -> {
-                            TabUtils.openUrlInCustomTab(
-                                    requireContext(), SURVEY_PANELIST_LEARN_MORE_LINK);
-                        });
         SpannableString spannableString =
                 new SpannableString(getContext().getString(R.string.survey_panelist_learn_more));
-        spannableString.setSpan(chromeClickableSpan, 0, spannableString.length(), 0);
-        mSurveyPanelistLearnMore.setSummary(spannableString);
+        spannableString.setSpan(
+                new ForegroundColorSpan(getContext().getColor(R.color.brave_link)),
+                0,
+                spannableString.length(),
+                0);
+        mSurveyPanelistLearnMore.setTitle(spannableString);
+        mSurveyPanelistLearnMore.setOnPreferenceClickListener(
+                preference -> {
+                    TabUtils.openUrlInCustomTab(requireContext(), SURVEY_PANELIST_LEARN_MORE_LINK);
+                    return true;
+                });
 
         mSocialBlockingCategory =
                 (PreferenceCategory) findPreference(PREF_BRAVE_SOCIAL_BLOCKING_SECTION);
@@ -1062,7 +1064,8 @@ public class BravePrivacySettings extends PrivacySettings {
                                 frag, PREF_ALLOW_ELEMENTS_BLOCKING_ON_PRIVATE_TABS);
                     }
                     if (!ChromeFeatureList.isEnabled(
-                            BraveFeatureList.BRAVE_NTP_BRANDED_WALLPAPER_SURVEY_PANELIST)) {
+                                    BraveFeatureList.BRAVE_NTP_BRANDED_WALLPAPER_SURVEY_PANELIST)
+                            || BraveOriginSubscriptionPrefs.getIsCredentialSummaryActiveCached()) {
                         indexData.removeEntryForKey(frag, PREF_SURVEY_PANELIST);
                     }
                     if (ChromeFeatureList.isEnabled(

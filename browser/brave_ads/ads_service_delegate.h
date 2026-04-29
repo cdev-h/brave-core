@@ -8,7 +8,7 @@
 
 #include <string>
 
-#include "base/memory/raw_ref.h"
+#include "base/memory/raw_ptr.h"
 #include "brave/components/brave_ads/core/browser/service/ads_service.h"
 
 class GURL;
@@ -22,14 +22,14 @@ class BraveAdaptiveCaptchaService;
 
 namespace brave_ads {
 
-// Singleton that owns all AdsService and associates them with Profiles.
-class AdsServiceDelegate : public AdsService::Delegate {
+// Browser-layer, platform-specific implementation of AdsService::Delegate.
+class AdsServiceDelegate final : public AdsService::Delegate {
  public:
-  explicit AdsServiceDelegate(
-      Profile& profile,
-      PrefService& local_state,
-      brave_adaptive_captcha::BraveAdaptiveCaptchaService&
-          adaptive_captcha_service);
+  // `adaptive_captcha_service` can be `nullptr` in tests.
+  AdsServiceDelegate(Profile& profile,
+                     PrefService& local_state,
+                     brave_adaptive_captcha::BraveAdaptiveCaptchaService*
+                         adaptive_captcha_service);
 
   AdsServiceDelegate(const AdsServiceDelegate&) = delete;
   AdsServiceDelegate& operator=(const AdsServiceDelegate&) = delete;
@@ -59,8 +59,8 @@ class AdsServiceDelegate : public AdsService::Delegate {
 
   const raw_ref<Profile> profile_;
   const raw_ref<PrefService> local_state_;
-  const raw_ref<brave_adaptive_captcha::BraveAdaptiveCaptchaService>
-      adaptive_captcha_service_;
+  const raw_ptr<brave_adaptive_captcha::BraveAdaptiveCaptchaService>
+      adaptive_captcha_service_;  // Not owned.
 };
 
 }  // namespace brave_ads

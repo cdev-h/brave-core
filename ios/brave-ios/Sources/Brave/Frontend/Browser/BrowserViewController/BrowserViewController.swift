@@ -1044,6 +1044,11 @@ public class BrowserViewController: UIViewController {
   public static let defaultBrowserNotificationId = "defaultBrowserNotification"
 
   private func scheduleDefaultBrowserNotification() {
+    if BraveOriginServiceFactory.get(profile: profileController.profile)?.isPurchased() == true {
+      Self.cancelScheduleDefaultBrowserNotification()
+      return
+    }
+
     let center = UNUserNotificationCenter.current()
 
     center.requestAuthorization(options: [.provisional, .alert, .sound, .badge]) { granted, error in
@@ -1096,7 +1101,7 @@ public class BrowserViewController: UIViewController {
     }
   }
 
-  private func cancelScheduleDefaultBrowserNotification() {
+  static func cancelScheduleDefaultBrowserNotification() {
     let center = UNUserNotificationCenter.current()
     center.removePendingNotificationRequests(withIdentifiers: [Self.defaultBrowserNotificationId])
 
@@ -1820,8 +1825,9 @@ public class BrowserViewController: UIViewController {
 
     updateRewardsButtonState()
 
+    let playlistItem = tab.playlistItem
     DispatchQueue.main.async {
-      if let item = tab.playlistItem {
+      if let item = playlistItem {
         if PlaylistItem.itemExists(uuid: item.tagId)
           || PlaylistItem.itemExists(pageSrc: item.pageSrc)
         {
@@ -2371,7 +2377,8 @@ extension BrowserViewController: SettingsDelegate {
 
     let quickViewController = QuickViewController(
       url: testURL,
-      for: currentTab
+      for: currentTab,
+      privateBrowsingManager: privateBrowsingManager
     )
 
     present(quickViewController, animated: true) {
@@ -2971,7 +2978,11 @@ extension BrowserViewController: PreferencesObserver {
       PrivacyReportsManager.scheduleProcessingBlockedRequests(
         isPrivateBrowsing: privateBrowsingManager.isPrivateBrowsing
       )
-      PrivacyReportsManager.scheduleNotification(debugMode: !AppConstants.isOfficialBuild)
+      if BraveOriginServiceFactory.get(profile: profileController.profile)?.isPurchased() == true {
+        PrivacyReportsManager.cancelNotification()
+      } else {
+        PrivacyReportsManager.scheduleNotification(debugMode: !AppConstants.isOfficialBuild)
+      }
     case Preferences.PrivacyReports.captureVPNAlerts.key:
       PrivacyReportsManager.scheduleVPNAlertsTask()
     case Preferences.Wallet.defaultEthWallet.key:
@@ -3059,7 +3070,7 @@ extension BrowserViewController {
         // Remove pending notification if default browser is set brave
         // Recognized by external link is open
         if !Preferences.DefaultBrowserIntro.defaultBrowserNotificationIsCanceled.value {
-          cancelScheduleDefaultBrowserNotification()
+          Self.cancelScheduleDefaultBrowserNotification()
         }
       }
     }
@@ -3184,9 +3195,12 @@ extension BrowserViewController {
       return
     }
 
+    let isOriginPurchased =
+      BraveOriginServiceFactory.get(profile: profileController.profile)?.isPurchased() == true
     let host = UIHostingController(
       rootView: PrivacyReportsManager.prepareView(
-        isPrivateBrowsing: privateBrowsingManager.isPrivateBrowsing
+        isPrivateBrowsing: privateBrowsingManager.isPrivateBrowsing,
+        isOriginPurchased: isOriginPurchased
       )
     )
 

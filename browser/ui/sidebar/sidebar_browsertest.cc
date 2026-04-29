@@ -44,7 +44,7 @@
 #include "brave/components/brave_talk/buildflags/buildflags.h"
 #include "brave/components/brave_wallet/common/buildflags/buildflags.h"
 #include "brave/components/constants/brave_switches.h"
-#include "brave/components/playlist/core/common/features.h"
+#include "brave/components/playlist/core/common/buildflags/buildflags.h"
 #include "brave/components/sidebar/browser/constants.h"
 #include "brave/components/sidebar/browser/pref_names.h"
 #include "brave/components/sidebar/browser/sidebar_item.h"
@@ -62,7 +62,6 @@
 #include "chrome/browser/ui/side_panel/side_panel_registry.h"
 #include "chrome/browser/ui/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/tabs/features.h"
-#include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/multi_contents_view.h"
@@ -87,6 +86,14 @@
 
 #if BUILDFLAG(ENABLE_AI_CHAT)
 #include "brave/components/ai_chat/core/common/features.h"
+#endif
+
+#if BUILDFLAG(ENABLE_PLAYLIST)
+#include "brave/components/playlist/core/common/features.h"
+#endif
+
+#if BUILDFLAG(ENABLE_SIDEBAR_V2)
+#include "brave/browser/ui/views/side_panel/brave_side_panel_resize_area.h"
 #endif
 
 using ::testing::Eq;
@@ -290,9 +297,11 @@ class SidebarBrowserTest : public InProcessBrowserTest {
     auto item_count =
         std::size(SidebarServiceFactory::kDefaultBuiltInItemTypes) -
         1 /* for history*/;
+#if BUILDFLAG(ENABLE_PLAYLIST)
     if (!base::FeatureList::IsEnabled(playlist::features::kPlaylist)) {
       item_count -= 1;
     }
+#endif
 
 #if BUILDFLAG(ENABLE_AI_CHAT)
     if (!ai_chat::features::IsAIChatEnabled()) {
@@ -1620,6 +1629,7 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Bool());
 #endif  // BUILDFLAG(ENABLE_AI_CHAT)
 
+#if BUILDFLAG(ENABLE_PLAYLIST)
 class SidebarBrowserTestWithPlaylist : public SidebarBrowserTest {
  public:
   SidebarBrowserTestWithPlaylist() {
@@ -1657,6 +1667,7 @@ IN_PROC_BROWSER_TEST_F(SidebarBrowserTestWithPlaylist, Incognito) {
   // Try Remove an item
   sidebar_service->RemoveItemAt(0);
 }
+#endif  // BUILDFLAG(ENABLE_PLAYLIST)
 
 #if BUILDFLAG(ENABLE_AI_CHAT)
 
@@ -1896,10 +1907,7 @@ IN_PROC_BROWSER_TEST_P(SidebarBrowserTestV1AndV2,
   auto* sidebar_container = GetSidebarContainerView();
 
   // Get the tab registry and create a kToolbar type entry
-  auto* registry = browser()
-                       ->GetActiveTabInterface()
-                       ->GetTabFeatures()
-                       ->side_panel_registry();
+  auto* registry = SidePanelRegistry::From(browser()->GetActiveTabInterface());
   ASSERT_TRUE(registry);
 
   // Create a kToolbar type SidePanelEntry
@@ -2049,11 +2057,20 @@ IN_PROC_BROWSER_TEST_F(SidebarBrowserTest, SidebarV2PanelPositionTest) {
   // --- Sidebar on right (default LTR: kSidePanelHorizontalAlignment = true)
   ASSERT_FALSE(sidebar->sidebar_on_left());
 
+  auto* contents = browser_view->contents_container();
+
   // Panel sits immediately left of the sidebar control:
   //   [contents] [panel] [sidebar_control]
   EXPECT_EQ(panel->bounds().right(), sidebar->bounds().x())
       << "panel=" << panel->bounds().ToString()
       << " sidebar=" << sidebar->bounds().ToString();
+
+  // Panel top must align with the contents container — the upstream layout
+  // offsets the panel -1px to overlap the toolbar separator; Brave removes
+  // that offset so the separator is fully visible.
+  EXPECT_EQ(panel->bounds().y(), contents->bounds().y())
+      << "panel y=" << panel->bounds().y()
+      << " contents y=" << contents->bounds().y();
 
   // --- Sidebar on left (kSidePanelHorizontalAlignment = false)
   prefs->SetBoolean(prefs::kSidePanelHorizontalAlignment, false);
@@ -2066,6 +2083,10 @@ IN_PROC_BROWSER_TEST_F(SidebarBrowserTest, SidebarV2PanelPositionTest) {
   EXPECT_EQ(sidebar->bounds().right(), panel->bounds().x())
       << "sidebar=" << sidebar->bounds().ToString()
       << " panel=" << panel->bounds().ToString();
+
+  EXPECT_EQ(panel->bounds().y(), contents->bounds().y())
+      << "panel y=" << panel->bounds().y()
+      << " contents y=" << contents->bounds().y();
 }
 
 // Verify that the sidebar item active state in SidebarModel is updated:
@@ -2124,6 +2145,82 @@ IN_PROC_BROWSER_TEST_F(SidebarBrowserTest, SidebarV2ActiveItemStateSync) {
   panel_ui->Toggle();
   ASSERT_TRUE(base::test::RunUntil(
       [&]() { return !model()->active_index().has_value(); }));
+}
+
+// Verify that the upstream SidePanelHeader is never added when a sidebar panel
+// is opened in V2, so Brave can render its own header.
+IN_PROC_BROWSER_TEST_F(SidebarBrowserTest, SidebarV2NoUpstreamHeaderTest) {
+  auto* panel_ui = browser()->GetFeatures().side_panel_ui();
+  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
+  auto* side_panel = browser_view->contents_height_side_panel();
+  side_panel->DisableAnimationsForTesting();
+
+  panel_ui->Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return side_panel->GetVisible(); }));
+
+  EXPECT_EQ(nullptr, side_panel->GetHeaderView<views::View>())
+      << "Upstream SidePanelHeader should not be present after V2 panel open";
+
+  // Also verify CustomizeChrome panel does not get an upstream header.
+  panel_ui->Show(SidePanelEntryId::kCustomizeChrome);
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return panel_ui->IsSidePanelEntryShowing(
+        SidePanelEntry::Key(SidePanelEntryId::kCustomizeChrome));
+  }));
+
+  EXPECT_EQ(nullptr, side_panel->GetHeaderView<views::View>())
+      << "Upstream SidePanelHeader should not be present for CustomizeChrome "
+         "panel";
+}
+
+// Verify that the resize area is positioned correctly for both border states.
+// With border: the resize area sits inside the border inset strip (its width
+// equals the border inset and it starts at x=0).
+// Without border: the resize area is a narrow kNoBorderResizeAreaWidth strip
+// placed at the inner edge facing the web content.
+IN_PROC_BROWSER_TEST_F(SidebarBrowserTest,
+                       SidebarV2ResizeAreaPositionMatchesBorderState) {
+  auto* panel_ui = browser()->GetFeatures().side_panel_ui();
+  auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
+  auto* side_panel = browser_view->contents_height_side_panel();
+  side_panel->DisableAnimationsForTesting();
+  auto* prefs = browser()->profile()->GetPrefs();
+
+  // Default: sidebar on right.
+  ASSERT_TRUE(prefs->GetBoolean(prefs::kSidePanelHorizontalAlignment));
+
+  panel_ui->Toggle();
+  ASSERT_TRUE(base::test::RunUntil([&]() { return side_panel->GetVisible(); }));
+
+  auto* resize_area = side_panel->resize_area_for_testing();
+  ASSERT_TRUE(resize_area);
+
+  // --- Border case (rounded corners ON) ---
+  prefs->SetBoolean(kWebViewRoundedCorners, true);
+  RunScheduledLayouts();
+  EXPECT_FALSE(side_panel->GetInsets().IsEmpty());
+
+  // In the bordered case the resize strip sits in the gap between the panel
+  // edge and the content, at the left edge (panel is on the right in LTR).
+  const gfx::Rect bordered_bounds = resize_area->bounds();
+  EXPECT_EQ(bordered_bounds.top_right(),
+            side_panel->GetContentParentView()->origin())
+      << "Bordered resize area right edge should align with content origin";
+  EXPECT_EQ(bordered_bounds.width(), side_panel->GetInsets().left())
+      << "Bordered resize area width should match the left border inset";
+
+  // --- No-border case (rounded corners OFF) ---
+  prefs->SetBoolean(kWebViewRoundedCorners, false);
+  RunScheduledLayouts();
+  EXPECT_TRUE(side_panel->GetInsets().IsEmpty());
+
+  const gfx::Rect no_border_bounds = resize_area->bounds();
+  EXPECT_EQ(no_border_bounds.origin(),
+            side_panel->GetContentParentView()->origin())
+      << "No-border resize area should be placed at the inner edge of content";
+  EXPECT_EQ(no_border_bounds.width(),
+            views::BraveSidePanelResizeArea::kNoBorderResizeAreaWidth)
+      << "No-border resize area width should equal kNoBorderResizeAreaWidth";
 }
 
 #endif  // BUILDFLAG(ENABLE_SIDEBAR_V2)

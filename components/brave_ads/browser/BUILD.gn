@@ -93,6 +93,8 @@ source_set("test_support") {
     "test/fake_ads_tooltips_delegate.h",
     "test/fake_bat_ads.cc",
     "test/fake_bat_ads.h",
+    "test/fake_bat_ads_client_notifier.cc",
+    "test/fake_bat_ads_client_notifier.h",
     "test/fake_bat_ads_service.cc",
     "test/fake_bat_ads_service.h",
     "test/fake_bat_ads_service_factory.cc",
@@ -110,6 +112,7 @@ source_set("test_support") {
     "//brave/components/services/bat_ads/public/interfaces",
     "//components/prefs",
     "//mojo/public/cpp/bindings",
+    "//ui/base/idle",
     "//url",
   ]
 
@@ -140,10 +143,12 @@ source_set("unit_tests") {
     "//base",
     "//base/test:test_support",
     "//brave/components/brave_ads/browser",
+    "//brave/components/brave_ads/browser/application_state:test_support",
     "//brave/components/brave_ads/core",
     "//brave/components/brave_ads/core/public:headers",
     "//brave/components/brave_component_updater/browser",
     "//brave/components/brave_rewards/core",
+    "//brave/components/brave_rewards/core:features",
     "//brave/components/brave_rewards/core/buildflags",
     "//brave/components/ntp_background_images/common",
     "//components/content_settings/core/browser",
@@ -153,6 +158,7 @@ source_set("unit_tests") {
     "//components/variations",
     "//content/test:test_support",
     "//testing/gtest",
+    "//ui/base/idle",
   ]
 
   if (enable_brave_rewards) {

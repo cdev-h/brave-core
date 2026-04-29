@@ -25,16 +25,18 @@
 #include "chrome/browser/ui/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_animation_coordinator.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_animation_ids.h"
-#include "chrome/browser/ui/views/side_panel/side_panel_util.h"
+#include "chrome/browser/ui/views/side_panel/side_panel_helper.h"
 #include "chrome/common/pref_names.h"
 #include "ui/base/metadata/metadata_impl_macros.h"
 #include "ui/color/color_provider.h"
 #include "ui/compositor/layer.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/background.h"
 #include "ui/views/border.h"
+#include "ui/views/layout/layout_provider.h"
 #include "ui/views/view_class_properties.h"
+
+using views::ShapeContextTokensOverride::kRoundedCornersBorderRadius;
 
 namespace {
 
@@ -111,13 +113,9 @@ SidePanel::SidePanel(BrowserView* browser_view,
       base::BindRepeating(&SidePanel::UpdateHorizontalAlignment,
                           base::Unretained(this)));
 
-  animation_coordinator_ =
-      std::make_unique<SidePanelAnimationCoordinator>(this);
-  animation_coordinator_->AddObserver(kSidePanelBoundsAnimation, this);
 }
 
 SidePanel::~SidePanel() {
-  animation_coordinator_->RemoveObserver(kSidePanelBoundsAnimation, this);
   scoped_observation_.RemoveObservation(this);
 }
 
@@ -147,7 +145,10 @@ void SidePanel::UpdateBorder() {
     // side panel implementation.
     SetBorder(views::CreateEmptyBorder(gfx::Insets::TLBR(-1, 0, 0, 0)));
 
-    shadow_ = BraveContentsViewUtil::CreateShadow(this);
+    const int r = views::LayoutProvider::Get()->GetCornerRadiusMetric(
+        kRoundedCornersBorderRadius);
+    shadow_ =
+        BraveContentsViewUtil::CreateShadow(this, gfx::RoundedCornersF(r));
     SetBackground(views::CreateSolidBackground(nala::kColorPageBackground));
 
     return;
@@ -192,7 +193,7 @@ gfx::Size SidePanel::GetMinimumSize() const {
 }
 
 bool SidePanel::IsClosing() {
-  return animation_coordinator_->IsClosing();
+  return state() == State::kClosing;
 }
 
 void SidePanel::AddedToWidget() {
@@ -291,13 +292,6 @@ void SidePanel::OnChildViewRemoved(View* observed_view, View* child) {
     scoped_observation_.RemoveObservation(child);
   }
 }
-
-void SidePanel::OnAnimationSequenceProgressed(
-    const SidePanelAnimationId animation_id,
-    double animation_value) {}
-
-void SidePanel::OnAnimationSequenceEnded(
-    const SidePanelAnimationId animation_id) {}
 
 void SidePanel::Open(bool animated) {
   UpdateVisibility(/*should_be_open=*/true);

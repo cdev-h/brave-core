@@ -15,11 +15,9 @@
 #include "base/notreached.h"
 #include "base/types/to_address.h"
 #include "brave/app/brave_command_ids.h"
-#include "brave/browser/email_aliases/email_aliases_service_factory.h"
 #include "brave/browser/profiles/profile_util.h"
 #include "brave/browser/ui/brave_pages.h"
 #include "brave/browser/ui/browser_commands.h"
-#include "brave/browser/ui/email_aliases/email_aliases_controller.h"
 #include "brave/browser/ui/sidebar/sidebar_utils.h"
 #include "brave/components/ai_chat/core/common/buildflags/buildflags.h"
 #include "brave/components/brave_news/common/buildflags/buildflags.h"
@@ -31,7 +29,7 @@
 #include "brave/components/commander/common/buildflags/buildflags.h"
 #include "brave/components/commands/common/features.h"
 #include "brave/components/constants/pref_names.h"
-#include "brave/components/email_aliases/features.h"
+#include "brave/components/email_aliases/buildflags/buildflags.h"
 #include "brave/components/playlist/core/common/buildflags/buildflags.h"
 #include "brave/components/speedreader/common/buildflags/buildflags.h"
 #include "chrome/app/chrome_command_ids.h"
@@ -73,7 +71,7 @@
 
 #if BUILDFLAG(ENABLE_PLAYLIST_WEBUI)
 #include "brave/browser/playlist/playlist_service_factory.h"
-#include "brave/components/playlist/core/common/features.h"
+#include "brave/components/playlist/core/browser/utils.h"
 #endif
 
 #if BUILDFLAG(ENABLE_COMMANDER)
@@ -94,6 +92,12 @@
 
 #if BUILDFLAG(ENABLE_BRAVE_WALLET)
 #include "brave/components/brave_wallet/browser/brave_wallet_utils.h"
+#endif
+
+#if BUILDFLAG(ENABLE_EMAIL_ALIASES)
+#include "brave/browser/email_aliases/email_aliases_service_factory.h"
+#include "brave/browser/ui/email_aliases/email_aliases_controller.h"
+#include "brave/components/email_aliases/features.h"
 #endif
 
 namespace {
@@ -162,8 +166,7 @@ void BraveBrowserCommandController::OnTabStripModelChanged(
   UpdateCommandsForSend();
   UpdateCommandsForPin();
 
-  if (base::FeatureList::IsEnabled(features::kSideBySide) &&
-      browser_->is_type_normal() && selection.active_tab_changed()) {
+  if (browser_->is_type_normal() && selection.active_tab_changed()) {
     UpdateCommandForSplitView();
   }
 }
@@ -346,11 +349,13 @@ void BraveBrowserCommandController::InitBraveCommandState() {
   UpdateCommandEnabled(IDC_TOGGLE_ALL_BOOKMARKS_BUTTON_VISIBILITY, true);
   UpdateCommandEnabled(IDC_EXPORT_ALL_BOOKMARKS, true);
 
+#if BUILDFLAG(ENABLE_EMAIL_ALIASES)
   UpdateCommandEnabled(
       IDC_SHOW_EMAIL_ALIASES,
       email_aliases::features::IsEmailAliasesEnabled() &&
           email_aliases::EmailAliasesServiceFactory::GetServiceForProfile(
               browser_->profile()));
+#endif
 
   if (browser_->is_type_normal()) {
     // Delete these when upstream enables by default.
@@ -451,7 +456,7 @@ void BraveBrowserCommandController::UpdateCommandForBraveVPN() {
 
 void BraveBrowserCommandController::UpdateCommandForPlaylist() {
 #if BUILDFLAG(ENABLE_PLAYLIST_WEBUI)
-  if (base::FeatureList::IsEnabled(playlist::features::kPlaylist)) {
+  if (playlist::IsPlaylistAllowed(browser_->profile()->GetPrefs())) {
     UpdateCommandEnabled(
         IDC_SHOW_PLAYLIST_BUBBLE,
         browser_->is_type_normal() &&
@@ -509,13 +514,6 @@ void BraveBrowserCommandController::UpdateCommandsForPin() {
 }
 
 void BraveBrowserCommandController::UpdateCommandForSplitView() {
-  // Some upstream unit test calls split tab apis w/o enabling SideBySide
-  // feature.
-  if (!base::FeatureList::IsEnabled(features::kSideBySide)) {
-    CHECK_IS_TEST();
-    return;
-  }
-
   UpdateCommandEnabled(
       IDC_NEW_SPLIT_VIEW,
       brave::CanOpenNewSplitTabsWithSideBySide(base::to_address(browser_)));
@@ -672,10 +670,10 @@ bool BraveBrowserCommandController::ExecuteBraveCommandWithDisposition(
     case IDC_SHOW_PLAYLIST_BUBBLE:
 #if BUILDFLAG(ENABLE_PLAYLIST_WEBUI)
       brave::ShowPlaylistBubble(&*browser_);
+      break;
 #else
       NOTREACHED() << " This command shouldn't be enabled";
 #endif
-      break;
     case IDC_SHOW_WAYBACK_MACHINE_BUBBLE:
 #if BUILDFLAG(ENABLE_BRAVE_WAYBACK_MACHINE)
       brave::ShowWaybackMachineBubble(&*browser_);
@@ -731,9 +729,11 @@ bool BraveBrowserCommandController::ExecuteBraveCommandWithDisposition(
     case IDC_SHOW_APPS_PAGE:
       brave::ShowAppsPage(&*browser_);
       break;
+#if BUILDFLAG(ENABLE_EMAIL_ALIASES)
     case IDC_SHOW_EMAIL_ALIASES:
       browser_->GetFeatures().email_aliases_controller()->OpenSettingsPage();
       break;
+#endif
     case IDC_WINDOW_GROUP_UNGROUPED_TABS:
       brave::GroupUngroupedTabs(&*browser_);
       break;
@@ -768,25 +768,21 @@ bool BraveBrowserCommandController::ExecuteBraveCommandWithDisposition(
       brave::BringAllTabs(&*browser_);
       break;
     case IDC_NEW_SPLIT_VIEW: {
-      CHECK(base::FeatureList::IsEnabled(features::kSideBySide));
       chrome::NewSplitTab(base::to_address(browser_),
                           split_tabs::SplitTabCreatedSource::kToolbarButton);
       break;
     }
     case IDC_TILE_TABS: {
-      CHECK(base::FeatureList::IsEnabled(features::kSideBySide));
       brave::SplitTabsWithSideBySide(
           base::to_address(browser_),
           split_tabs::SplitTabCreatedSource::kToolbarButton);
       break;
     }
     case IDC_BREAK_TILE: {
-      CHECK(base::FeatureList::IsEnabled(features::kSideBySide));
       brave::RemoveSplitWithSideBySide(base::to_address(browser_));
       break;
     }
     case IDC_SWAP_SPLIT_VIEW: {
-      CHECK(base::FeatureList::IsEnabled(features::kSideBySide));
       brave::SwapTabsInSplitWithSideBySide(base::to_address(browser_));
       break;
     }

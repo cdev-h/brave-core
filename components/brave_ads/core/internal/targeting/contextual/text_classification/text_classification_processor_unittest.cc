@@ -11,8 +11,8 @@
 #include "brave/components/brave_ads/core/internal/common/resources/test/language_components_test_constants.h"
 #include "brave/components/brave_ads/core/internal/common/test/test_base.h"
 #include "brave/components/brave_ads/core/internal/deprecated/client/client_state_manager.h"
-#include "brave/components/brave_ads/core/internal/targeting/contextual/text_classification/model/text_classification_alias.h"
 #include "brave/components/brave_ads/core/internal/targeting/contextual/text_classification/resource/text_classification_resource.h"
+#include "brave/components/brave_ads/core/internal/targeting/contextual/text_classification/text_classification_types.h"
 
 // npm run test -- brave_unit_tests --filter=BraveAds*
 
@@ -36,7 +36,6 @@ TEST_F(BraveAdsTextClassificationProcessorTest,
 
   // Act
   processor.Process(/*text=*/"The quick brown fox jumps over the lazy dog");
-  task_environment_.RunUntilIdle();
 
   // Assert
   const TextClassificationProbabilityList& text_classification_probabilities =
@@ -55,7 +54,6 @@ TEST_F(BraveAdsTextClassificationProcessorTest, DoNotProcessForEmptyText) {
 
   // Act
   processor.Process(/*text=*/"");
-  task_environment_.RunUntilIdle();
 
   // Assert
   const TextClassificationProbabilityList& text_classification_probabilities =
@@ -87,9 +85,13 @@ TEST_F(BraveAdsTextClassificationProcessorTest, ProcessText) {
 
   // Act
   processor.Process(/*text=*/"Some content about technology & computing");
-  task_environment_.RunUntilIdle();
 
   // Assert
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return ClientStateManager::GetInstance()
+               .GetTextClassificationProbabilitiesHistory()
+               .size() == 1U;
+  }));
   const TextClassificationProbabilityList& text_classification_probabilities =
       ClientStateManager::GetInstance()
           .GetTextClassificationProbabilitiesHistory();
@@ -108,9 +110,13 @@ TEST_F(BraveAdsTextClassificationProcessorTest, ProcessMultipleText) {
   processor.Process(/*text=*/"Some content about cooking food");
   processor.Process(/*text=*/"Some content about finance & banking");
   processor.Process(/*text=*/"Some content about technology & computing");
-  task_environment_.RunUntilIdle();
 
   // Assert
+  ASSERT_TRUE(base::test::RunUntil([&] {
+    return ClientStateManager::GetInstance()
+               .GetTextClassificationProbabilitiesHistory()
+               .size() == 3U;
+  }));
   const TextClassificationProbabilityList& text_classification_probabilities =
       ClientStateManager::GetInstance()
           .GetTextClassificationProbabilitiesHistory();

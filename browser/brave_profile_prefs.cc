@@ -40,7 +40,7 @@
 #include "brave/components/constants/pref_names.h"
 #include "brave/components/de_amp/common/pref_names.h"
 #include "brave/components/debounce/core/browser/debounce_service.h"
-#include "brave/components/email_aliases/email_aliases_service.h"
+#include "brave/components/email_aliases/buildflags/buildflags.h"
 #include "brave/components/global_privacy_control/pref_names.h"
 #include "brave/components/ipfs/ipfs_prefs.h"
 #include "brave/components/ntp_background_images/browser/view_counter_service.h"
@@ -167,6 +167,10 @@ using extensions::FeatureSwitch;
 #include "brave/components/brave_wallet/browser/pref_names.h"
 #endif
 
+#if BUILDFLAG(ENABLE_EMAIL_ALIASES)
+#include "brave/components/email_aliases/email_aliases_service.h"
+#endif
+
 namespace brave {
 
 namespace {
@@ -189,11 +193,6 @@ void OverrideDefaultPrefValues(user_prefs::PrefRegistrySyncable* registry) {
   registry->SetDefaultPrefValue(feed::prefs::kArticlesListVisible,
                                 base::Value(false));
   registry->SetDefaultPrefValue(feed::prefs::kEnableSnippetsByDse,
-                                base::Value(false));
-
-  // Explicitly disable safe browsing extended reporting by default in case they
-  // change it in upstream.
-  registry->SetDefaultPrefValue(prefs::kSafeBrowsingScoutReportingEnabled,
                                 base::Value(false));
 #else
   // Turn on most visited mode on NTP by default.
@@ -221,6 +220,11 @@ void OverrideDefaultPrefValues(user_prefs::PrefRegistrySyncable* registry) {
   // Disable safebrowsing reporting
   registry->SetDefaultPrefValue(
       prefs::kSafeBrowsingExtendedReportingOptInAllowed, base::Value(false));
+
+  // Explicitly disable safe browsing extended reporting by default in case they
+  // change it in upstream.
+  registry->SetDefaultPrefValue(prefs::kSafeBrowsingScoutReportingEnabled,
+                                base::Value(false));
 
 #if defined(TOOLKIT_VIEWS)
   // Disable side search by default.
@@ -585,7 +589,9 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   web_discovery::WebDiscoveryService::RegisterProfilePrefs(registry);
 #endif
 
+#if BUILDFLAG(ENABLE_EMAIL_ALIASES)
   email_aliases::EmailAliasesService::RegisterProfilePrefs(registry);
+#endif
 
 #if defined(TOOLKIT_VIEWS)
   registry->RegisterBooleanPref(prefs::kPinShareMenuButton, true);

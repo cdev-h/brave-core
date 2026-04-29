@@ -32,26 +32,23 @@ AdHandler::AdHandler()
       search_result_ad_handler_(site_visit_) {
   conversions_observation_.Observe(&conversions_);
   site_visit_observation_.Observe(&site_visit_);
-  subdivision_.AddObserver(&subdivision_targeting_);
+  subdivision_observation_.Observe(&subdivision_);
 }
 
-AdHandler::~AdHandler() {
-  subdivision_.RemoveObserver(&subdivision_targeting_);
-}
+AdHandler::~AdHandler() = default;
 
 void AdHandler::TriggerNotificationAdEvent(
     const std::string& placement_id,
     mojom::NotificationAdEventType mojom_ad_event_type,
-    TriggerAdEventCallback callback) {
+    ResultCallback callback) {
   CHECK(!placement_id.empty());
 
   notification_ad_handler_.TriggerEvent(placement_id, mojom_ad_event_type,
                                         std::move(callback));
 }
 
-void AdHandler::ParseAndSaveNewTabPageAds(
-    base::DictValue dict,
-    ParseAndSaveNewTabPageAdsCallback callback) {
+void AdHandler::ParseAndSaveNewTabPageAds(base::DictValue dict,
+                                          ResultCallback callback) {
   new_tab_page_ad_handler_.ParseAndSave(std::move(dict), std::move(callback));
 }
 
@@ -64,7 +61,7 @@ void AdHandler::TriggerNewTabPageAdEvent(
     const std::string& placement_id,
     const std::string& creative_instance_id,
     mojom::NewTabPageAdEventType mojom_ad_event_type,
-    TriggerAdEventCallback callback) {
+    ResultCallback callback) {
   CHECK(!placement_id.empty());
 
   new_tab_page_ad_handler_.TriggerEvent(placement_id, creative_instance_id,
@@ -81,7 +78,7 @@ AdHandler::MaybeGetSearchResultAd(const std::string& placement_id) {
 void AdHandler::TriggerSearchResultAdEvent(
     mojom::CreativeSearchResultAdInfoPtr mojom_creative_ad,
     mojom::SearchResultAdEventType mojom_ad_event_type,
-    TriggerAdEventCallback callback) {
+    ResultCallback callback) {
   CHECK(mojom_creative_ad);
 
   if (mojom_ad_event_type ==

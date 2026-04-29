@@ -17,7 +17,10 @@
 #include "base/location.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
+#include "brave/components/brave_ads/core/internal/account/confirmations/confirmation_type.h"
 #include "brave/components/brave_ads/core/internal/account/transactions/transaction_info.h"
+#include "brave/components/brave_ads/core/internal/account/transactions/transactions_database_table_util.h"
+#include "brave/components/brave_ads/core/internal/ad_units/ad_type.h"
 #include "brave/components/brave_ads/core/internal/common/database/database_column_util.h"
 #include "brave/components/brave_ads/core/internal/common/database/database_statement_util.h"
 #include "brave/components/brave_ads/core/internal/common/database/database_table_util.h"
@@ -25,8 +28,6 @@
 #include "brave/components/brave_ads/core/internal/common/logging_util.h"
 #include "brave/components/brave_ads/core/internal/common/time/time_util.h"
 #include "brave/components/brave_ads/core/mojom/brave_ads.mojom.h"
-#include "brave/components/brave_ads/core/public/account/confirmations/confirmation_type.h"
-#include "brave/components/brave_ads/core/public/ad_units/ad_type.h"
 
 namespace brave_ads::database::table {
 
@@ -79,30 +80,6 @@ size_t BindColumns(const mojom::DBActionInfoPtr& mojom_db_action,
   return row_count;
 }
 
-TransactionInfo FromMojomRow(const mojom::DBRowInfoPtr& mojom_db_row) {
-  CHECK(mojom_db_row);
-
-  TransactionInfo transaction;
-
-  transaction.id = ColumnString(mojom_db_row, 0);
-  const base::Time created_at = ColumnTime(mojom_db_row, 1);
-  if (!created_at.is_null()) {
-    transaction.created_at = created_at;
-  }
-  transaction.creative_instance_id = ColumnString(mojom_db_row, 2);
-  transaction.value = ColumnDouble(mojom_db_row, 3);
-  transaction.segment = ColumnString(mojom_db_row, 4);
-  transaction.ad_type = ToMojomAdType(ColumnString(mojom_db_row, 5));
-  transaction.confirmation_type =
-      ToMojomConfirmationType(ColumnString(mojom_db_row, 6));
-  const base::Time reconciled_at = ColumnTime(mojom_db_row, 7);
-  if (!reconciled_at.is_null()) {
-    transaction.reconciled_at = reconciled_at;
-  }
-
-  return transaction;
-}
-
 void GetCallback(
     GetTransactionsCallback callback,
     mojom::DBTransactionResultInfoPtr mojom_db_transaction_result) {
@@ -117,7 +94,7 @@ void GetCallback(
 
   for (const auto& mojom_db_row :
        mojom_db_transaction_result->rows_union->get_rows()) {
-    const TransactionInfo transaction = FromMojomRow(mojom_db_row);
+    const TransactionInfo transaction = TransactionFromMojomRow(mojom_db_row);
     if (!transaction.IsValid()) {
       BLOG(0, "Invalid transaction");
       continue;
@@ -193,6 +170,23 @@ void MigrateToV43(const mojom::DBTransactionInfoPtr& mojom_db_transaction) {
                    /*columns=*/{"id"});
   CreateTableIndex(mojom_db_transaction, /*table_name=*/"transactions",
                    /*columns=*/{"creative_instance_id"});
+}
+
+void MigrateToV57(const mojom::DBTransactionInfoPtr& mojom_db_transaction) {
+  CHECK(mojom_db_transaction);
+
+  // No longer needed now that `Reconcile` matches only on `id`.
+  DropTableIndex(mojom_db_transaction,
+                 "transactions_creative_instance_id_index");
+
+  // Redundant with the implicit index on the PRIMARY KEY.
+  DropTableIndex(mojom_db_transaction, "transactions_id_index");
+
+  // Replaced with a composite index that also covers `created_at`, optimizing
+  // `PurgeExpired` which filters on both columns.
+  DropTableIndex(mojom_db_transaction, "transactions_reconciled_at_index");
+  CreateTableIndex(mojom_db_transaction, /*table_name=*/"transactions",
+                   /*columns=*/{"reconciled_at", "created_at"});
 }
 
 }  // namespace
@@ -273,14 +267,10 @@ void Transactions::Reconcile(const PaymentTokenList& payment_tokens,
             reconciled_at = $2
           WHERE
             reconciled_at == 0
-            AND (
-              id IN $3
-              OR creative_instance_id IN $4
-            ))",
+            AND id IN $3)",
       {kTableName, TimeToSqlValueAsString(base::Time::Now()),
        BuildBindColumnPlaceholder(
-           /*column_count=*/transaction_ids.size()),
-       BuildBindColumnPlaceholder(/*column_count=*/1)},
+           /*column_count=*/transaction_ids.size())},
       nullptr);
 
   int32_t index = 0;
@@ -331,12 +321,9 @@ void Transactions::Create(
   CreateTableIndex(mojom_db_transaction, kTableName,
                    /*columns=*/{"created_at"});
 
-  // Optimize database query for `Reconcile` from schema 43.
+  // Optimize database query for `PurgeExpired` from schema 57.
   CreateTableIndex(mojom_db_transaction, kTableName,
-                   /*columns=*/{"reconciled_at"});
-  CreateTableIndex(mojom_db_transaction, kTableName, /*columns=*/{"id"});
-  CreateTableIndex(mojom_db_transaction, kTableName,
-                   /*columns=*/{"creative_instance_id"});
+                   /*columns=*/{"reconciled_at", "created_at"});
 }
 
 void Transactions::Migrate(
@@ -357,6 +344,11 @@ void Transactions::Migrate(
 
     case 43: {
       MigrateToV43(mojom_db_transaction);
+      break;
+    }
+
+    case 57: {
+      MigrateToV57(mojom_db_transaction);
       break;
     }
 

@@ -34,7 +34,7 @@
 #include "brave/components/constants/webui_url_constants.h"
 #include "chrome/browser/favicon/favicon_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/chrome_select_file_policy.h"
+#include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/grit/brave_components_webui_strings.h"
@@ -671,7 +671,8 @@ void AIChatUIPageHandler::BindRelatedConversation(
   } else {
     conversation = AIChatServiceFactory::GetForBrowserContext(profile_)
                        ->CreateConversation();
-    if (ai_chat::CanAssociateContent(
+    if (features::IsPageContextEnabledInitially() &&
+        ai_chat::CanAssociateContent(
             &active_chat_tab_helper_->web_contents_content())) {
       conversation->associated_content_manager()->AddContent(
           &active_chat_tab_helper_->web_contents_content());

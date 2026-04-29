@@ -189,10 +189,10 @@ SolanaTxManager::SolanaTxManager(
     TxService& tx_service,
     JsonRpcService* json_rpc_service,
     KeyringService& keyring_service,
-    TxStorageDelegate& delegate,
+    TxStorage& tx_storage,
     AccountResolverDelegate& account_resolver_delegate)
     : TxManager(
-          std::make_unique<SolanaTxStateManager>(delegate,
+          std::make_unique<SolanaTxStateManager>(tx_storage,
                                                  account_resolver_delegate),
           std::make_unique<SolanaBlockTracker>(json_rpc_service),
           tx_service,
@@ -716,7 +716,7 @@ void SolanaTxManager::MakeSystemProgramTransferTxData(
     MakeSystemProgramTransferTxDataCallback callback) {
   if (BlockchainRegistry::GetInstance()->IsRestrictedAddress(to)) {
     std::move(callback).Run(nullptr, mojom::SolanaProviderError::kInvalidParams,
-                            WalletRestrictedAddressErrorMessage());
+                            WalletInternalErrorMessage());
     return;
   }
 
@@ -764,7 +764,7 @@ void SolanaTxManager::MakeTokenProgramTransferTxData(
   if (BlockchainRegistry::GetInstance()->IsRestrictedAddress(
           to_wallet_address)) {
     std::move(callback).Run(nullptr, mojom::SolanaProviderError::kInvalidParams,
-                            WalletRestrictedAddressErrorMessage());
+                            WalletInternalErrorMessage());
     return;
   }
 

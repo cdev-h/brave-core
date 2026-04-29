@@ -8,7 +8,6 @@
 #include "brave/components/brave_ads/core/internal/prefs/pref_util.h"
 #include "brave/components/brave_ads/core/public/ad_units/notification_ad/notification_ad_feature.h"
 #include "brave/components/brave_ads/core/public/prefs/pref_names.h"
-#include "brave/components/brave_origin/brave_origin_utils.h"
 #include "brave/components/brave_rewards/core/pref_names.h"
 #include "brave/components/ntp_background_images/common/pref_names.h"
 
@@ -60,7 +59,7 @@ bool UserHasOptedInToSearchResultAds() {
 }
 
 bool UserHasOptedInToSurveyPanelist() {
-  if (brave_origin::IsBraveOriginPurchased()) {
+  if (GetProfileBooleanPref(brave_rewards::prefs::kDisabledByPolicy)) {
     return false;
   }
   return GetProfileBooleanPref(

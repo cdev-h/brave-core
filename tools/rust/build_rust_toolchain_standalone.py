@@ -72,6 +72,7 @@ import subprocess
 import sys
 import tarfile
 from types import ModuleType
+from typing import Optional
 
 # Filename of the LLVM linker binary produced by the Chromium LLVM build.
 LLD = 'lld' + ('.exe' if sys.platform == 'win32' else '')
@@ -95,15 +96,21 @@ TOOLS_RUST = PurePath('tools') / 'rust'
 # <RUST_BUILD_DIR>/<triple>/stage1/lib/rustlib/wasm32-unknown-unknown/.
 STAGE1_RUSTLIB = PurePath('stage1') / 'lib' / 'rustlib'
 
-# The path for depot_tools under Chromium src.
-DEPOT_TOOLS_REL_PATH = PurePath('third_party/depot_tools/')
-
-# Relative path (within the Chromium src/ root) of the depot_tools vpython3
-VPYTHON_PATH = DEPOT_TOOLS_REL_PATH / 'vpython3'
+# The relative path for `vpython3` found under Chromium. This is not the same
+# vpython3 that is selected by `depot_tools` from `$PATH`.
+VPYTHON_PATH = PurePath('third_party/depot_tools/vpython3')
 
 # Latest Chromium depot_tools bundle
 DEPOT_TOOLS_URL = 'https://chromium.googlesource.com/chromium/tools/depot_tools'
 
+# This source is used as a token to check if we have a valid Chromium repo as
+# it is one of those reliable files that are always present in any version.
+CHROME_VERSION_FILE = PurePath('chrome/VERSION')
+
+if sys.platform == 'win32':
+    # Path to Git's sh.exe on Windows, which is used by
+    # `tools/rust/build_rust.py` to build the toolchain on Windows.`
+    GIT_SH_PRESUMED_BIN_PATH = Path(r'C:\Program Files\Git\bin\sh.exe')
 
 def _check_call(*command, cwd=None):
     """Run *command* as a subprocess, logging the invocation and any stderr.
@@ -173,65 +180,35 @@ class ToolchainBuilder:
     both before the build starts and in a `finally` block afterwards.
     """
 
-    def __init__(self,
-                 chromium_src: str,
-                 out_dir: str,
-                 clone_chromium: bool = False):
-        """Validate inputs, resolve paths, and import the build/package modules.
+    def __init__(self, chromium_src: str, out_dir: str):
+        """ Initialses the builder fields.
 
         Args:
-            chromium_src: Path to the Chromium `src/` directory.  Must exist
-                and contain a `tools/rust/` subdirectory.
+            chromium_src: Path to the Chromium `src/` directory.
             out_dir: Directory where the output `.tar.xz` archive is written.
-                Created (including parents) if it does not already exist.
-            clone_chromium: Whether the builder should operate in a mode that
-                allows cloning Chromium automatically, if necessary.
-
-        Raises:
-            RuntimeError: If `chromium_src` does not exist or does not look
-                like a Chromium src tree, or if `out_dir` exists but is not a
-                directory.
         """
+        # The absolute path to the Chromium source directory.
         self.chromium_src: Path = Path(chromium_src).expanduser().resolve()
-        if not self._has_valid_chromium_path():
-            if clone_chromium:
-                logging.info('Chromium src not found at %s, cloning...',
-                             self.chromium_src)
-                self._clone_chromium()
-            else:
-                raise RuntimeError(
-                    '--chromium-src must be an existing Chromium src '
-                    f'directory: {chromium_src}')
 
-        # Absolute path to tools/rust/ inside the Chromium source tree.
+        # path to tools/rust/ inside the Chromium source tree.
         self.tools_rust: Path = self.chromium_src / TOOLS_RUST
-        if not self.tools_rust.is_dir():
-            raise RuntimeError(f'{self.tools_rust} is not a directory.')
 
         # Absolute path to depot_tools vpython3 inside the Chromium checkout.
         self.vpython_path: Path = self.chromium_src / VPYTHON_PATH
 
-        # Resolved absolute path to the output directory.
+        # path to the output directory where the toolchain will be written.
         self.out_dir: Path = Path(out_dir).expanduser().resolve()
-        if self.out_dir.exists() and not self.out_dir.is_dir():
-            raise RuntimeError(
-                f'--out-dir must be a directory path: {out_dir}')
-        if not self.out_dir.exists():
-            self.out_dir.mkdir(parents=True)
 
         # Absolute path to tools/rust/config.toml.template.  This file is
         # temporarily edited during the build to add wasm32 profiler settings.
         self.config_toml_template: Path = self.tools_rust / CONFIG_TOML_TEMPLATE
 
-        tools_rust_str: str = str(self.tools_rust)
-        if tools_rust_str not in sys.path:
-            sys.path.insert(0, tools_rust_str)
-        # Dynamically imported tools/rust/build_rust.py module.
-        self.build_rust_module: ModuleType = importlib.import_module(
-            'build_rust')
-        # Dynamically imported tools/rust/package_rust.py module.
-        self.package_rust_module: ModuleType = importlib.import_module(
-            'package_rust')
+        # Module for tools/rust/build_rust.py. Initialised by `run()`.
+        self.build_rust_module: Optional[ModuleType] = None
+
+        # Module for tools/rust/package_rust.py. Initialised by `run()`.
+        self.package_rust_module: Optional[ModuleType] = None
+
 
     @contextlib.contextmanager
     def _temporary_config_toml_template_edits(self):
@@ -373,6 +350,7 @@ class ToolchainBuilder:
                               target_triple / STAGE1_RUSTLIB)
         output_archive = self.out_dir / self._package_name()
 
+        logging.info('Creating output archive at %s', output_archive)
         with tarfile.open(output_archive, 'w:xz') as tar:
             tar.add(Path(self.build_rust_module.RUST_HOST_LLVM_INSTALL_DIR) /
                     'bin' / LLD,
@@ -381,15 +359,25 @@ class ToolchainBuilder:
                     arcname=WASM32_UNKNOWN_UNKNOWN)
 
     def _bootstrap_depot_tools(self):
-        """Clone depot_tools into this builder's Chromium checkout."""
+        """Ensure `depot_tools` is on PATH if no existing install is found.
+
+        This method checks for `gclient` and, if it is not found, attempts to
+        use or install `depot_tools` alongside `src/`.
+        """
         if shutil.which('gclient') is not None:
             logging.debug('depot_tools already on PATH, skipping clone')
             return
 
-        depot_tools_path = self.chromium_src / DEPOT_TOOLS_REL_PATH
-        logging.info('Installing depot_tools under %s', depot_tools_path)
-        depot_tools_path.parent.mkdir(parents=True, exist_ok=True)
-        _check_call('git', 'clone', DEPOT_TOOLS_URL, str(depot_tools_path))
+        depot_tools_path = self.chromium_src.parent / 'depot_tools'
+        if (depot_tools_path / 'gclient').is_file():
+            # If `gclient` is already present in the expected install path, we
+            # can skip cloning `depot_tools` and just add it to `PATH`.
+            logging.info('depot_tools already present at %s, adding to PATH.',
+                         depot_tools_path)
+        else:
+            logging.info('Installing depot_tools under %s', depot_tools_path)
+            depot_tools_path.parent.mkdir(parents=True, exist_ok=True)
+            _check_call('git', 'clone', DEPOT_TOOLS_URL, str(depot_tools_path))
 
         # Add depot_tools to PATH so that gclient can be used.
         os.environ['PATH'] = os.pathsep.join(
@@ -398,13 +386,11 @@ class ToolchainBuilder:
 
     def _has_valid_chromium_path(self) -> bool:
         """Return whether self.chromium_src points to a valid Chromium repo."""
-        if not self.chromium_src.exists():
+        # We start by checking for the presence of `chrome/VERSION`, as this is
+        # a quite unmistakable Chromium repo trait that indicates a proper
+        # checkout.
+        if not (self.chromium_src / CHROME_VERSION_FILE).exists():
             return False
-
-        if not self.chromium_src.is_dir():
-            raise RuntimeError(
-                f'--chromium-src exists but is not a directory: '
-                f'{self.chromium_src}')
 
         logging.info('Checking for valid Chromium repo at %s',
                      self.chromium_src)
@@ -413,7 +399,7 @@ class ToolchainBuilder:
                         'log',
                         '-1',
                         '--oneline',
-                        'chrome/VERSION',
+                        str(CHROME_VERSION_FILE),
                         cwd=self.chromium_src)
         except (subprocess.CalledProcessError, OSError):
             return False
@@ -423,6 +409,15 @@ class ToolchainBuilder:
     def _checkout_chromium_ref(self, ref: str):
         """Check out a specific Chromium ref and resync dependencies."""
         logging.info('Checking out Chromium ref %s', ref)
+        if (sys.platform == 'win32'
+                and 'DEPOT_TOOLS_WIN_TOOLCHAIN' not in os.environ):
+            # On Windows, we need the windows toolchain to be able to build the
+            # code without a VS installation. This is desirable as we want
+            # toolchains to be hermetic.
+            os.environ["DEPOT_TOOLS_WIN_TOOLCHAIN_BASE_URL"] = (
+                'https://vhemnu34de4lf5cj6bx2wwshyy0egdxk.lambda-url.us-west-'
+                '2.on.aws/windows-hermetic-toolchain/')
+
         _check_call('gclient',
                     'sync',
                     '--force',
@@ -434,20 +429,48 @@ class ToolchainBuilder:
                     'log',
                     '-1',
                     '--oneline',
-                    'chrome/VERSION',
+                    str(CHROME_VERSION_FILE),
                     cwd=self.chromium_src)
 
     def _clone_chromium(self):
         """Clone a fresh Chromium checkout under `self.chromium_src.parent`."""
-        self._bootstrap_depot_tools()
+        if sys.platform == 'win32':
+            # Setting up global git user.name and user.email is required to
+            # avoid issues when building the rust toolchain on Windows, as it
+            # is not uncommon for the WASM scripts to perform git operations
+            # that fail if these are not set. As this can be surprisingly
+            # disruptive, and mostly intended for CI, we guard this behind a
+            # check for the presence of a user email, which indicates a
+            # machine is not already set up as a developer environment.
+            has_user_email = subprocess.run(
+                ['git', 'config', '--global', '--get', 'user.email'],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL).returncode == 0
+            if not has_user_email:
+                logging.warning('Setting global git user.name and user.email '
+                                'to avoid clone failure on Windows. THIS WILL '
+                                'OVERRIDE ANY PRE-EXISTING SETTINGS.')
+                _check_call('git', 'config', '--global', 'user.name', 'Devops')
+                _check_call('git', 'config', '--global', 'user.email',
+                            'devops@brave.com')
+                _check_call('git', 'config', '--global', 'core.autocrlf',
+                            'false')
+                _check_call('git', 'config', '--global', 'core.filemode',
+                            'false')
+                _check_call('git', 'config', '--global', 'core.preloadindex',
+                            'true')
+                _check_call('git', 'config', '--global', 'core.fscache',
+                            'true')
 
         self.chromium_src.parent.mkdir(parents=True, exist_ok=True)
         _check_call('fetch',
                     '--nohooks',
+                    '--nohistory',
                     'chromium',
                     cwd=self.chromium_src.parent)
 
-    def run(self, use_ref: str = None):
+    def run(self, clone_chromium: bool = False, use_ref: str = None):
         """Execute the full build-and-package pipeline.
 
         Coordinates the three phases in order:
@@ -463,11 +486,71 @@ class ToolchainBuilder:
             use_ref: Optional Git reference (branch, tag, or commit) to check
                 out before building. If provided, calls `_checkout_chromium_ref`
                 first.
+            clone_chromium: Whether the builder should operate in a mode that
+                allows cloning Chromium automatically, if necessary.
+        Raises:
+            RuntimeError: If --chromium-src but there is no valid Chromium
+            repo at the path, and --clone-chromium is not provided.
+            RuntimeError: If tools_rust directory is not found.
+            RuntimeError: On Windows, if Git sh.exe is not in path and no
+            installation for it can be found with Git.
+            subprocess.CalledProcessError: If any subprocess command fails
+                during the build process (from _bootstrap_depot_tools,
+                _clone_chromium, _checkout_chromium_ref, _prepare_run_xpy,
+                or _run_xpy).
         """
+        if not self._has_valid_chromium_path():
+            if clone_chromium:
+                self._bootstrap_depot_tools()
+                logging.info('Chromium src not found at %s, cloning...',
+                             self.chromium_src)
+                self._clone_chromium()
+            else:
+                raise RuntimeError(
+                    '--chromium-src must be an existing Chromium src '
+                    f'directory: {self.chromium_src}')
+        else:
+            # We only try to bootstrap depot_tools when we have a Chromium
+            # checkout (this case), or when we are trying to clone Chromium.
+            self._bootstrap_depot_tools()
+
+        # Create the output directory.
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+
+        # Validating that self.tools_rust is ready for use.
+        if not self.tools_rust.is_dir():
+            raise RuntimeError(f'{self.tools_rust} directory not found.')
+
+        # Loading the build modules from `src/tools/rust/`.
+        tools_rust_str: str = str(self.tools_rust)
+        if tools_rust_str not in sys.path:
+            sys.path.insert(0, tools_rust_str)
+        if not self.build_rust_module:
+            self.build_rust_module: ModuleType = importlib.import_module(
+                'build_rust')
+        if not self.package_rust_module:
+            self.package_rust_module: ModuleType = importlib.import_module(
+                'package_rust')
+
         if use_ref:
             self._checkout_chromium_ref(use_ref)
 
         # Build process
+        if sys.platform == 'win32' and shutil.which('sh') is None:
+            # Setting up git bin in PATH so `build_rust.py` can eventually
+            # use sh.exe, which it requires to run.
+            if GIT_SH_PRESUMED_BIN_PATH.is_file():
+                logging.info(
+                    'Adding Git bin to PATH for depot_tools on Windows: %s',
+                    GIT_SH_PRESUMED_BIN_PATH.parent)
+                os.environ['PATH'] = os.pathsep.join(
+                    [str(GIT_SH_PRESUMED_BIN_PATH.parent), os.environ['PATH']])
+            else:
+                raise RuntimeError(
+                    'Git sh.exe not found on PATH. This is required to run '
+                    'build_rust.py on Windows. Please install Git for Windows '
+                    'and ensure its bin/ directory is on PATH.')
+
         with self._temporary_config_toml_template_edits():
             self._prepare_run_xpy()
             self._run_xpy()
@@ -492,19 +575,54 @@ def main():
         '--use-ref',
         help='Git reference (branch, tag, commit) to check out before building'
         ' the toolchain.')
+    parser.add_argument(
+        '--with-git-cache',
+        nargs='?',
+        const='',
+        metavar='PATH',
+        help='Set GIT_CACHE_PATH in environment for the build (used by CI). '
+        'Optionally provide PATH; if omitted, defaults to <home>/cache.')
     parser.add_argument('--verbose',
                         action='store_true',
                         help='Enable verbose (debug) logging')
     args = parser.parse_args()
+
+    if not args.chromium_src:
+        parser.error('--chromium-src cannot be empty')
+    if not args.out_dir:
+        parser.error('--out-dir cannot be empty')
 
     if args.clone_chromium and not args.use_ref:
         parser.error('--use-ref is required when --clone-chromium is provided')
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
 
-    builder = ToolchainBuilder(args.chromium_src, args.out_dir,
-                               args.clone_chromium)
-    builder.run(args.use_ref)
+    if args.with_git_cache is not None:
+        # This mirrors a bit what is being done in our infra, where the cache
+        #  is usually baked under the home directory as `cache/`.
+        if args.with_git_cache:
+            git_cache_path = Path(args.with_git_cache).expanduser()
+        else:
+            if sys.platform == 'win32':
+                git_cache_path = Path(
+                    os.environ.get('USERPROFILE', str(Path.home()))) / 'cache'
+            else:
+                git_cache_path = Path(os.environ.get('HOME', str(
+                    Path.home()))) / 'cache'
+
+        if not git_cache_path.is_dir():
+            raise RuntimeError(f'GIT_CACHE_PATH is not a valid directory: '
+                               f'{git_cache_path}')
+        if 'GIT_CACHE_PATH' in os.environ:
+            raise RuntimeError('GIT_CACHE_PATH is already set in the '
+                               'environment.')
+
+        logging.info('Setting GIT_CACHE_PATH for the build: %s',
+                     git_cache_path)
+        os.environ['GIT_CACHE_PATH'] = str(git_cache_path)
+
+    ToolchainBuilder(args.chromium_src,
+                     args.out_dir).run(args.clone_chromium, args.use_ref)
     return 0
 
 

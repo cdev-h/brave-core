@@ -8,8 +8,9 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
-#include "base/functional/callback_forward.h"
+#include "base/functional/callback.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/memory/weak_ptr.h"
@@ -26,6 +27,7 @@
 #include "brave/components/brave_account/endpoints/verify_resend.h"
 #include "brave/components/brave_account/mojom/brave_account.mojom.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/os_crypt/async/common/encryptor.h"
 #include "components/prefs/pref_member.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "mojo/public/cpp/bindings/pending_remote.h"
@@ -38,8 +40,17 @@ namespace network {
 class SharedURLLoaderFactory;
 }  // namespace network
 
+namespace os_crypt_async {
+class OSCryptAsync;
+}  // namespace os_crypt_async
+
 namespace brave_account {
 
+// BraveAccountService has no non-Mojom callers. Its only public entrypoint is
+// `BindInterface()`, and this should remain the case. Receiver binding is
+// deferred until `FinishInitialization()` installs the encryptor, and any
+// service-initiated work that can reach `Encrypt()`/`Decrypt()` is also
+// started only after that point.
 class BraveAccountService : public KeyedService, public mojom::Authentication {
  public:
   using OSCryptCallback =
@@ -47,12 +58,16 @@ class BraveAccountService : public KeyedService, public mojom::Authentication {
 
   BraveAccountService(
       PrefService* pref_service,
-      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
+      os_crypt_async::OSCryptAsync* os_crypt_async);
 
   BraveAccountService(const BraveAccountService&) = delete;
   BraveAccountService& operator=(const BraveAccountService&) = delete;
 
   ~BraveAccountService() override;
+
+  static void SetOSCryptCallbacksForTesting(OSCryptCallback encrypt_callback,
+                                            OSCryptCallback decrypt_callback);
 
   void BindInterface(
       mojo::PendingReceiver<mojom::Authentication> pending_receiver);
@@ -61,17 +76,12 @@ class BraveAccountService : public KeyedService, public mojom::Authentication {
   template <typename TestCase>
   friend class BraveAccountServiceTest;
 
-  // Provides dependency injection for testing.
-  BraveAccountService(
-      PrefService* pref_service,
-      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-      OSCryptCallback encrypt_callback,
-      OSCryptCallback decrypt_callback);
+  void FinishInitialization(os_crypt_async::Encryptor encryptor);
 
   void AddObserver(
       mojo::PendingRemote<mojom::AuthenticationObserver> observer) override;
 
-  void RegisterInitialize(std::optional<mojom::Service> initiating_service,
+  void RegisterInitialize(mojom::Service initiating_service,
                           const std::string& email,
                           const std::string& blinded_message,
                           RegisterInitializeCallback callback) override;
@@ -88,7 +98,7 @@ class BraveAccountService : public KeyedService, public mojom::Authentication {
 
   void CancelRegistration() override;
 
-  void LoginInitialize(std::optional<mojom::Service> initiating_service,
+  void LoginInitialize(mojom::Service initiating_service,
                        const std::string& email,
                        const std::string& serialized_ke1,
                        LoginInitializeCallback callback) override;
@@ -154,8 +164,8 @@ class BraveAccountService : public KeyedService, public mojom::Authentication {
 
   const raw_ptr<PrefService> pref_service_;
   scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
-  OSCryptCallback encrypt_callback_;
-  OSCryptCallback decrypt_callback_;
+  std::optional<os_crypt_async::Encryptor> encryptor_;
+  std::vector<mojo::PendingReceiver<mojom::Authentication>> pending_receivers_;
   mojo::ReceiverSet<mojom::Authentication> authentication_receivers_;
   mojo::RemoteSet<mojom::AuthenticationObserver> observers_;
   StringPrefMember pref_verification_token_;

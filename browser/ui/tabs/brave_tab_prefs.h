@@ -33,6 +33,11 @@ inline constexpr char kVerticalTabsOnRight[] =
     "brave.tabs.vertical_tabs_on_right";
 inline constexpr char kVerticalTabsShowScrollbar[] =
     "brave.tabs.vertical_tabs_show_scrollbar";
+// When tabs::kBraveScrollableTabStrip is on: toggles visibility of the
+// horizontal tab strip scroll buttons only (wheel/trackpad overflow scrolling
+// is unchanged).
+inline constexpr char kShowHorizontalTabScrollButtons[] =
+    "brave.tabs.show_horizontal_tab_scroll_buttons";
 inline constexpr char kTreeTabsEnabled[] = "brave.tabs.tree_tabs_enabled";
 
 inline constexpr char kSharedPinnedTab[] = "brave.tabs.shared_pinned_tab";
@@ -65,6 +70,10 @@ void MigrateBraveProfilePrefs(PrefService* prefs);
 
 bool AreTooltipsEnabled(PrefService* prefs);
 bool AreCardPreviewsEnabled(PrefService* prefs);
+
+// True when the scrollable horizontal tab strip feature flag is enabled and the
+// user pref to use it is on.
+bool IsScrollableHorizontalTabStripEnabled(const PrefService* prefs);
 
 }  // namespace brave_tabs
 

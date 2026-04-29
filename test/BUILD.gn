@@ -17,7 +17,9 @@ import("//brave/components/brave_talk/buildflags/buildflags.gni")
 import("//brave/components/brave_vpn/common/buildflags/buildflags.gni")
 import("//brave/components/brave_wallet/common/buildflags/buildflags.gni")
 import("//brave/components/brave_wayback_machine/buildflags/buildflags.gni")
+import("//brave/components/commander/common/buildflags/buildflags.gni")
 import("//brave/components/containers/buildflags/buildflags.gni")
+import("//brave/components/email_aliases/buildflags/buildflags.gni")
 import("//brave/components/ntp_background_images/buildflags/buildflags.gni")
 import("//brave/components/playlist/core/common/buildflags/buildflags.gni")
 import("//brave/components/psst/buildflags/buildflags.gni")
@@ -161,16 +163,15 @@ test("brave_unit_tests") {
     "//brave/browser/brave_shields:unit_tests",
     "//brave/browser/brave_stats:unit_tests",
     "//brave/browser/content_settings:unit_tests",
-    "//brave/browser/email_aliases:unit_tests",
     "//brave/browser/ephemeral_storage:unit_tests",
     "//brave/browser/global_privacy_control:unit_tests",
+    "//brave/browser/history_embeddings:unit_tests",
     "//brave/browser/metrics:brave_metrics_unit_tests",
     "//brave/browser/misc_metrics:unit_tests",
     "//brave/browser/net:unit_tests",
     "//brave/browser/new_tab:unittest",
     "//brave/browser/ntp_background:unit_tests",
     "//brave/browser/permissions:unit_tests",
-    "//brave/browser/playlist/test:unit_tests",
     "//brave/browser/policy/handlers:unit_tests",
     "//brave/browser/profiles:unit_tests",
     "//brave/browser/profiles:util",
@@ -188,23 +189,6 @@ test("brave_unit_tests") {
     "//brave/components/brave_component_updater/browser",
     "//brave/components/brave_origin/buildflags",
     "//brave/components/brave_perf_predictor/browser",
-  ]
-
-  if (is_brave_origin_branded) {
-    deps += [
-      "//brave/browser/ui/views/brave_origin:unit_tests",
-      "//brave/browser/ui/webui/brave_origin_startup:unit_tests",
-    ]
-  }
-
-  if (enable_brave_news) {
-    deps += [
-      "//brave/components/brave_news/browser/test:brave_news_unit_tests",
-      "//brave/components/brave_news/common:unit_tests",
-    ]
-  }
-
-  deps += [
     "//brave/components/brave_referrals/browser:unit_tests",
     "//brave/components/brave_rewards/core",
     "//brave/components/brave_rewards/core:features",
@@ -248,7 +232,6 @@ test("brave_unit_tests") {
     "//brave/components/p3a:unit_tests",
     "//brave/components/p3a_utils/test:p3a_utils_unit_tests",
     "//brave/components/permissions:unit_tests",
-    "//brave/components/playlist/core/common:unit_tests",
     "//brave/components/query_filter:unit_tests",
     "//brave/components/request_otr/browser:unit_tests",
     "//brave/components/resources:strings_grit",
@@ -278,6 +261,7 @@ test("brave_unit_tests") {
     "//chrome:strings",
     "//chrome/app:command_ids",
     "//chrome/browser/bookmarks",
+    "//chrome/browser/bookmarks:test_support",
     "//chrome/browser/browsing_data:constants",
     "//chrome/browser/content_settings:content_settings_factory",
     "//chrome/browser/custom_handlers",
@@ -286,6 +270,7 @@ test("brave_unit_tests") {
     "//chrome/browser/permissions",
     "//chrome/browser/prefs",
     "//chrome/browser/sync",
+    "//chrome/browser/trusted_vault",
     "//chrome/browser/ui",
     "//chrome/test:test_support",
     "//components/bookmarks/browser",
@@ -331,6 +316,24 @@ test("brave_unit_tests") {
     "//brave/components/brave_stats/browser",
   ]
 
+  if (is_brave_origin_branded) {
+    deps += [
+      "//brave/browser/ui/views/brave_origin:unit_tests",
+      "//brave/browser/ui/webui/brave_origin_startup:unit_tests",
+    ]
+  }
+
+  if (enable_brave_news) {
+    deps += [
+      "//brave/components/brave_news/browser/test:brave_news_unit_tests",
+      "//brave/components/brave_news/common:unit_tests",
+    ]
+  }
+
+  if (enable_email_aliases) {
+    deps += [ "//brave/browser/email_aliases:unit_tests" ]
+  }
+
   if (is_win) {
     deps += [
       "//brave/browser/day_zero_browser_ui_expt:unit_tests",
@@ -360,6 +363,14 @@ test("brave_unit_tests") {
       "//brave/browser/brave_wallet:unit_tests",
       "//brave/browser/decentralized_dns/test:unit_tests",
       "//brave/components/services/brave_wallet/zcash:zcash_decoder_unit_tests",
+    ]
+  }
+
+  if (enable_playlist) {
+    deps += [
+      "//brave/browser/playlist/test:unit_tests",
+      "//brave/components/playlist/core/browser:unit_tests",
+      "//brave/components/playlist/core/common:unit_tests",
     ]
   }
 
@@ -503,6 +514,7 @@ test("brave_unit_tests") {
       "//brave/ui/views:unit_tests",
       "//chrome/browser/gcm",
       "//chrome/browser/history",
+      "//chrome/browser/profile_resetter",
       "//chrome/browser/ui/views/bubble",
       "//components/favicon/content",
       "//components/push_messaging:test_support",
@@ -620,6 +632,9 @@ test("brave_unit_tests") {
     deps += [
       "//brave/browser/containers:unit_tests",
       "//brave/browser/ui/containers:unit_tests",
+
+      # For brave_bookmark_context_menu_controller_unittest.cc
+      "//brave/components/containers/core/common",
     ]
   }
 
@@ -802,7 +817,7 @@ if (!is_android) {
       "//chrome:resources",
       "//chrome:strings",
       "//chrome/browser",
-      "//chrome/browser/password_manager/factories:password_factory_headers",
+      "//chrome/browser/password_manager/factories",
       "//chrome/browser/profiles:profile",
       "//chrome/browser/search_engines",
       "//chrome/browser/ui",
@@ -866,6 +881,7 @@ test("brave_browser_tests") {
     "//brave/browser/brave_content_browser_client_browsertest.cc",
     "//brave/browser/brave_prefs_browsertest.cc",
     "//brave/browser/brave_scheme_load_browsertest.cc",
+    "//brave/browser/brave_shields/ad_block_dat_cache_browsertest.cc",
     "//brave/browser/brave_shields/ad_block_devtools_browsertest.cc",
     "//brave/browser/brave_shields/ad_block_service_browsertest.cc",
     "//brave/browser/brave_shields/ad_block_service_browsertest.h",
@@ -928,6 +944,7 @@ test("brave_browser_tests") {
     "//brave/browser",
     "//brave/browser/autoplay:browser_tests",
     "//brave/browser/brave_shields:brave_shields_impl",
+    "//brave/browser/brave_shields:test_support",
     "//brave/browser/brave_stats:browser_tests",
     "//brave/browser/browsing_data:browser_tests",
     "//brave/browser/ephemeral_storage:browser_tests",
@@ -942,9 +959,7 @@ test("brave_browser_tests") {
     "//brave/browser/new_tab:browser_tests",
     "//brave/browser/ntp_background",
     "//brave/browser/permissions:browser_tests",
-    "//brave/browser/playlist/test:browser_tests",
     "//brave/browser/profiles:util",
-    "//brave/browser/psst:browser_tests",
     "//brave/browser/regional_capabilities:browser_tests",
     "//brave/browser/sandbox:browser_tests",
     "//brave/browser/script_injector:browser_tests",
@@ -967,6 +982,7 @@ test("brave_browser_tests") {
     "//brave/components/brave_perf_predictor/common",
     "//brave/components/brave_referrals/browser",
     "//brave/components/brave_rewards/core",
+    "//brave/components/email_aliases/buildflags",
   ]
 
   if (enable_brave_rewards) {
@@ -981,6 +997,10 @@ test("brave_browser_tests") {
       "//brave/browser/brave_news:browser_tests",
       "//brave/components/brave_news/browser",
     ]
+  }
+
+  if (enable_email_aliases) {
+    deps += [ "//brave/components/email_aliases:features" ]
   }
 
   deps += [
@@ -1002,14 +1022,12 @@ test("brave_browser_tests") {
     "//brave/components/de_amp/common",
     "//brave/components/debounce/core/browser",
     "//brave/components/debounce/core/common",
-    "//brave/components/email_aliases:features",
     "//brave/components/global_privacy_control",
     "//brave/components/https_upgrade_exceptions/browser",
     "//brave/components/l10n/common",
     "//brave/components/l10n/common:test_support",
     "//brave/components/ntp_background_images/buildflags",
     "//brave/components/ntp_background_images/common",
-    "//brave/components/playlist/content/browser",
     "//brave/components/query_filter",
     "//brave/components/resources:strings_grit",
     "//brave/components/skus/common",
@@ -1032,6 +1050,7 @@ test("brave_browser_tests") {
     "//chrome/browser/prefetch",
     "//chrome/browser/preloading:prefs",
     "//chrome/browser/profiles:profile",
+    "//chrome/browser/renderer_context_menu:impl",
     "//chrome/browser/search_engines",
     "//chrome/browser/sync",
     "//chrome/browser/tab_list",
@@ -1135,6 +1154,8 @@ test("brave_browser_tests") {
 
   if (!is_android) {
     deps += [
+      "//chrome/browser/profile_resetter:profile_resetter_test_base",
+      "//chrome/browser/ui/frame",
       "//chrome/browser/ui/side_panel",
       "//chrome/browser/ui/side_panel:side_panel_views_dependent",
     ]
@@ -1155,6 +1176,13 @@ test("brave_browser_tests") {
 
   if (enable_tor && enable_extensions) {
     sources += [ "//brave/browser/ui/webui/settings/brave_tor_snowflake_extension_browsertest.cc" ]
+  }
+
+  if (enable_playlist) {
+    deps += [
+      "//brave/browser/playlist/test:browser_tests",
+      "//brave/components/playlist/content/browser",
+    ]
   }
 
   if (enable_brave_wallet) {
@@ -1255,6 +1283,10 @@ test("brave_browser_tests") {
     ]
   }
 
+  if (enable_email_aliases) {
+    deps += [ "//brave/browser/email_aliases:browser_tests" ]
+  }
+
   if (is_win || is_linux) {
     sources += [ "//brave/browser/renderer_context_menu/brave_spelling_options_submenu_observer_browsertest.cc" ]
     deps += [
@@ -1288,7 +1320,6 @@ test("brave_browser_tests") {
       "//brave/browser/ui/views/toolbar/brave_toolbar_view_browsertest.cc",
     ]
     deps += [
-      "//brave/browser/email_aliases:browser_tests",
       "//brave/browser/ui/darker_theme:browser_tests",
       "//brave/browser/ui/sidebar:browser_tests",
       "//brave/browser/ui/tabs:browser_tests",
@@ -1337,6 +1368,7 @@ test("brave_browser_tests") {
       "//brave/browser/ui/toolbar/brave_location_bar_model_delegate_browsertest.cc",
     ]
     deps += [
+      "//brave:packed_resources",
       "//brave/app/theme:brave_theme_resources_grit",
       "//brave/app/theme:brave_unscaled_resources_grit",
       "//brave/browser/banners:browser_tests",
@@ -1441,6 +1473,13 @@ test("brave_browser_tests") {
     sources -= android_test_exception_sources
     sources += android_only_test_sources
   }
+
+  if (enable_psst) {
+    if (!is_mac) {
+      # Skip tests on MAC, See crbug.com/363677523
+      deps += [ "//brave/browser/psst:browser_tests" ]
+    }
+  }
 }
 
 # All in this section is for running instrumentation java tests
@@ -1477,6 +1516,7 @@ if (is_android) {
     sources = [
       "//brave/android/javatests/org/chromium/chrome/browser/BraveSafetyNetThreatsPrioritiesTest.java",
       "//brave/android/javatests/org/chromium/chrome/browser/BytecodeTest.java",
+      "//brave/android/javatests/org/chromium/chrome/browser/autofill/settings/BraveAutofillPaymentMethodsFragmentTest.java",
       "//brave/android/javatests/org/chromium/chrome/browser/homepage/settings/BraveHomepageSettingsTest.java",
       "//brave/android/javatests/org/chromium/chrome/browser/language/settings/BraveLanguageSettingsTest.java",
       "//brave/android/javatests/org/chromium/chrome/browser/origin/settings/BraveOriginPreferencesTest.java",
@@ -1525,7 +1565,9 @@ if (is_android) {
       "//chrome/browser/tab:java",
       "//chrome/browser/tab_ui/android:java",
       "//chrome/browser/tabmodel:java",
+      "//chrome/browser/ui/android/actions:java",
       "//chrome/browser/ui/android/appmenu:java",
+      "//chrome/browser/ui/android/bottombar:java",
       "//chrome/browser/ui/android/desktop_windowing:java",
       "//chrome/browser/ui/android/edge_to_edge:java",
       "//chrome/browser/ui/android/extensions:java",
@@ -1535,6 +1577,8 @@ if (is_android) {
       "//chrome/browser/ui/android/multiwindow:java",
       "//chrome/browser/ui/android/native_page:java",
       "//chrome/browser/ui/android/omnibox:java",
+      "//chrome/browser/ui/android/searchactivityutils:java",
+      "//chrome/browser/ui/android/signin:java",
       "//chrome/browser/ui/android/theme:java",
       "//chrome/browser/ui/android/toolbar:java",
       "//chrome/browser/ui/messages/android:java",

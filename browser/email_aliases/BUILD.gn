@@ -3,7 +3,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import("//brave/components/email_aliases/buildflags/buildflags.gni")
 import("//build/config/ui.gni")
+
+assert(enable_email_aliases)
 
 static_library("email_aliases") {
   sources = [
@@ -42,6 +45,7 @@ source_set("unit_tests") {
     "//chrome/browser/profiles",
     "//chrome/test:test_support",
     "//components/keyed_service/core",
+    "//components/os_crypt/async/browser:test_support",
     "//mojo/public/cpp/bindings",
     "//testing/gtest",
   ]

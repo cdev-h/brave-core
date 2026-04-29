@@ -16,14 +16,15 @@
 #include "base/location.h"
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
+#include "brave/components/brave_ads/core/internal/account/confirmations/confirmation_type.h"
 #include "brave/components/brave_ads/core/internal/common/database/database_column_util.h"
 #include "brave/components/brave_ads/core/internal/common/database/database_statement_util.h"
 #include "brave/components/brave_ads/core/internal/common/database/database_table_util.h"
 #include "brave/components/brave_ads/core/internal/common/database/database_transaction_util.h"
 #include "brave/components/brave_ads/core/internal/common/logging_util.h"
 #include "brave/components/brave_ads/core/internal/common/time/time_util.h"
+#include "brave/components/brave_ads/core/internal/creatives/conversions/creative_set_conversion_database_table_util.h"
 #include "brave/components/brave_ads/core/mojom/brave_ads.mojom.h"
-#include "brave/components/brave_ads/core/public/account/confirmations/confirmation_type.h"
 
 namespace brave_ads::database::table {
 
@@ -67,24 +68,6 @@ size_t BindColumns(const mojom::DBActionInfoPtr& mojom_db_action,
   return row_count;
 }
 
-CreativeSetConversionInfo FromMojomRow(
-    const mojom::DBRowInfoPtr& mojom_db_row) {
-  CHECK(mojom_db_row);
-
-  CreativeSetConversionInfo creative_set_conversion;
-
-  creative_set_conversion.id = ColumnString(mojom_db_row, 0);
-  creative_set_conversion.url_pattern = ColumnString(mojom_db_row, 1);
-  creative_set_conversion.observation_window =
-      base::Days(ColumnInt(mojom_db_row, 2));
-  const base::Time expire_at = ColumnTime(mojom_db_row, 3);
-  if (!expire_at.is_null()) {
-    creative_set_conversion.expire_at = expire_at;
-  }
-
-  return creative_set_conversion;
-}
-
 void GetCallback(
     GetCreativeSetConversionsCallback callback,
     mojom::DBTransactionResultInfoPtr mojom_db_transaction_result) {
@@ -101,7 +84,7 @@ void GetCallback(
   for (const auto& mojom_db_row :
        mojom_db_transaction_result->rows_union->get_rows()) {
     const CreativeSetConversionInfo creative_set_conversion =
-        FromMojomRow(mojom_db_row);
+        CreativeSetConversionFromMojomRow(mojom_db_row);
     if (!creative_set_conversion.IsValid()) {
       BLOG(0, "Invalid creative set conversion");
       continue;
@@ -227,7 +210,7 @@ void CreativeSetConversions::GetActive(
   mojom_db_action->type = mojom::DBActionInfo::Type::kExecuteQueryWithBindings;
   mojom_db_action->sql = base::ReplaceStringPlaceholders(
       R"(
-          SELECT
+          SELECT DISTINCT
             creative_set_conversion.creative_set_id,
             creative_set_conversion.url_pattern,
             creative_set_conversion.observation_window,

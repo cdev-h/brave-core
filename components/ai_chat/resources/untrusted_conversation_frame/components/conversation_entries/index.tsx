@@ -168,6 +168,10 @@ function ConversationEntries() {
 
     const showEditInput = editInputId === entryNumber
     const showEditIndicator = !showEditInput && !!group[0].edits?.length
+    const turnIds = new Set([
+      firstEntry.uuid,
+      ...(firstEntry.edits?.map((edit) => edit.uuid) ?? []),
+    ])
 
     // Can't edit complicated structured content (for now)
     // Not allowed to edit agent conversations until the edit submission
@@ -190,12 +194,11 @@ function ConversationEntries() {
       [styles.turnAI]: isAIAssistant,
     })
 
-    const handleCopyText =
-      useConversationEventClipboardCopyHandler(firstEntryEdit)
+    const handleCopyText = useConversationEventClipboardCopyHandler(group)
 
     const tabAttachments =
-      conversationContext.associatedContent?.filter(
-        (c) => c.conversationTurnUuid === firstEntryEdit.uuid,
+      conversationContext.associatedContent?.filter((c) =>
+        turnIds.has(c.conversationTurnUuid),
       ) ?? []
     const hasAttachments =
       !!firstEntryEdit.uploadedFiles?.length || tabAttachments.length > 0

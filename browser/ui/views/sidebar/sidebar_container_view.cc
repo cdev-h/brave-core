@@ -27,12 +27,12 @@
 #include "brave/browser/ui/views/frame/brave_browser_view.h"
 #include "brave/browser/ui/views/frame/brave_contents_view_util.h"
 #include "brave/browser/ui/views/frame/layout/brave_browser_view_tabbed_layout_impl.h"
-#include "brave/browser/ui/views/side_panel/playlist/playlist_side_panel_coordinator.h"
 #include "brave/browser/ui/views/sidebar/sidebar_control_view.h"
 #include "brave/browser/ui/views/toolbar/brave_toolbar_view.h"
 #include "brave/browser/ui/views/toolbar/side_panel_button.h"
 #include "brave/components/constants/pref_names.h"
 #include "brave/components/constants/webui_url_constants.h"
+#include "brave/components/playlist/core/common/buildflags/buildflags.h"
 #include "brave/components/sidebar/browser/sidebar_item.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -46,7 +46,6 @@
 #include "chrome/browser/ui/side_panel/side_panel_registry.h"
 #include "chrome/browser/ui/side_panel/side_panel_ui.h"
 #include "chrome/browser/ui/tabs/features.h"
-#include "chrome/browser/ui/tabs/public/tab_features.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/side_panel/side_panel.h"
@@ -69,6 +68,10 @@
 #include "ui/views/view_class_properties.h"
 #include "ui/views/view_utils.h"
 #include "ui/views/widget/widget.h"
+
+#if BUILDFLAG(ENABLE_PLAYLIST)
+#include "brave/browser/ui/views/side_panel/playlist/playlist_side_panel_coordinator.h"
+#endif
 
 namespace {
 
@@ -250,6 +253,9 @@ void SidebarContainerView::WillShowSidePanel() {
 bool SidebarContainerView::IsFullscreenForCurrentEntry() const {
   CHECK(!base::FeatureList::IsEnabled(sidebar::features::kSidebarV2));
 
+#if !BUILDFLAG(ENABLE_PLAYLIST)
+  return false;
+#else
   // For now, we only supports fullscreen from playlist.
   if (side_panel_coordinator_->GetCurrentEntryId(
           SidePanelEntry::PanelType::kContent) != SidePanelEntryId::kPlaylist) {
@@ -278,6 +284,7 @@ bool SidebarContainerView::IsFullscreenForCurrentEntry() const {
   }
 
   return false;
+#endif  // BUILDFLAG(ENABLE_PLAYLIST)
 }
 
 void SidebarContainerView::UpdateBorder() {
@@ -975,12 +982,7 @@ void SidebarContainerView::OnTabWillBeRemoved(tabs::TabInterface* tab,
                                               int index) {
   CHECK(!base::FeatureList::IsEnabled(sidebar::features::kSidebarV2));
 
-  // At this time, we can stop observing as TabFeatures is available.
-  if (!tab->GetTabFeatures()) {
-    return;
-  }
-
-  auto* registry = tab->GetTabFeatures()->side_panel_registry();
+  auto* registry = SidePanelRegistry::From(tab);
   if (!registry) {
     return;
   }
@@ -1043,11 +1045,8 @@ void SidebarContainerView::StartObservingContextualSidePanelEntry(
   CHECK(!base::FeatureList::IsEnabled(sidebar::features::kSidebarV2));
 
   auto* tab = tabs::TabInterface::GetFromContents(contents);
-  if (!tab->GetTabFeatures()) {
-    return;
-  }
 
-  auto* registry = tab->GetTabFeatures()->side_panel_registry();
+  auto* registry = SidePanelRegistry::From(tab);
   if (!registry) {
     return;
   }
